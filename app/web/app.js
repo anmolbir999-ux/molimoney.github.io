@@ -936,11 +936,18 @@
       }
       const P = styleParams(train.style);
       const tst = E.newTraining({ ...st.cfg, tickers, capital, stopAtr: P.stopAtr, brain: { ...P } }, start, end, lessons, mistakes);
+      const calls = {};
+      for (let i = 0; i < tickers.length; i++) {
+        if (cancel) throw new Error('stopped');
+        progress(i, tickers.length, `Making trend calls for ${sym(tickers[i])}`);
+        await new Promise((ok) => setTimeout(ok, 15));
+        try { calls[tickers[i]] = E.trendCalls(data[tickers[i]].bars, nifty.bars, start, end); } catch (e) { calls[tickers[i]] = []; }
+      }
       progress(syms.length, syms.length, 'Warming up');
       await new Promise((ok) => setTimeout(ok, 30));
       const ctx = E.begin(tst, data, nifty, Date.now());
       E.skipTo(ctx, start);
-      Object.assign(train, { phase: 'running', tst, ctx, playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx), runCapital: capital });
+      Object.assign(train, { phase: 'running', tst, ctx, calls, playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx), runCapital: capital });
       train.timer = setInterval(trainTick, 100);
     } catch (e) {
       toast(e.message === 'stopped' ? 'Training cancelled' : 'Could not load history – ' + e.message);
@@ -968,7 +975,7 @@
     const sum = { id: Date.now().toString(36), at: nowIso(), label: train.label, start: eq[0]?.[0] || train.start, end: eq[eq.length - 1]?.[0] || train.end,
       brain: train.brain, stocks: Object.keys(tst.tickers).length, capital: train.runCapital, ret: idx.length ? idx[idx.length - 1] - 100 : 0,
       nret: nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null, dd: maxDD(idx), trades: S.n, win: S.winRate,
-      pnl: S.pnl, taught: false, curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
+      pnl: S.pnl, taught: false, trend: (() => { const r = E.scoreCalls(Object.values(train.calls || {}).flat()); return r.n ? { n: r.n, acc: r.hit / r.n, base: r.base / r.n } : null; })(), curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
     st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
     store.save(st);
     Object.assign(train, { phase: 'done', playing: false, summary: sum, trades, preview: E.previewTeach(st, tst, todayIST()) });
@@ -1195,6 +1202,28 @@
     return h;
   }
 
+  /** Trend calls the past account made, revealed only up to the replay date. */
+  function pastTrendCard(asOf, done) {
+    const C = train.calls; if (!C) return '';
+    const all = Object.values(C).flat(); if (!all.length) return `<div class="sec">Trend calls</div><div class="card"><p class="empty">Not enough earlier history to make trend calls in this period.</p></div>`;
+    const r = E.scoreCalls(all, asOf), p = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '–');
+    const latest = Object.entries(C).map(([s, cs]) => [s, cs.filter((x) => x.d <= asOf).pop()]).filter(([, x]) => x);
+    let h = `<div class="sec">Trend calls ${done ? 'in this run' : 'so far'}</div><div class="card">`;
+    h += `<p class="sub" style="margin-top:0">Every 20 sessions Moli called each stock's next 20 sessions using only what it knew that day. ${done ? '' : 'Results show up as the replay reaches each call\'s date.'}</p>`;
+    h += `<div class="grid"><div><div class="m">Calls checked</div><div class="stat">${r.n}</div></div><div><div class="m">Right</div><div class="stat">${p(r.hit, r.n)}</div></div>
+      <div style="margin-top:10px"><div class="m">Always guessing</div><b>${p(r.base, r.n)}</b></div><div style="margin-top:10px"><div class="m">Clear calls right</div><b>${p(r.leanHit, r.leaned)}</b> <span class="m">of ${r.leaned}</span></div></div>`;
+    if (r.n) h += `<p class="m" style="margin:10px 0 0">Up calls right ${r.upHit}/${r.up} · down calls right ${r.downHit}/${r.down} · the trend was the same 20 sessions later ${p(r.stay, r.n)} of the time. ${r.n < 30 ? 'Too few calls to judge yet.' : r.hit - r.base >= 0.04 * r.n ? 'Better than guessing here.' : r.hit > r.base ? 'Barely better than guessing.' : 'No better than guessing here.'}</p>`;
+    const first = all.map((x) => x.d).sort()[0];
+    if (!latest.length && first) h += `<p class="m" style="margin:10px 0 0">First calls from ${fdate(first)} – the model needs about 2 years of earlier prices to learn from.</p>`;
+    if (latest.length) {
+      h += `<div class="lbl" style="margin-top:14px">${done ? 'Last calls' : 'Trend on ' + fdate(asOf)}</div>` + latest.map(([s, x]) => {
+        const known = x.due && x.due <= asOf, ok = known && (x.call === 'unclear' ? null : x.call === 'up' ? x.ret > 0 : x.ret <= 0);
+        return `<div class="row"><div><b>${sym(s)}</b> ${trendPill(x.now)}<div class="m">${fdate(x.d)} · next 20: ${x.call === 'unclear' ? 'no clear call' : 'leans ' + x.call} (${Math.round(x.pUp * 100)}% up)</div></div>
+          <div class="r">${known ? `<b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">${ok == null ? 'no call' : ok ? 'right' : 'wrong'}</div>` : '<span class="m">waiting</span>'}</div></div>`;
+      }).join('');
+    }
+    return h + `</div>`;
+  }
   function viewTrain() {
     const ph = train.phase;
     if (ph === 'repeating' || ph === 'repeatDone') return viewRepeat();
@@ -1216,6 +1245,7 @@
       }
       h += `</div>`;
       if (train.missing && train.missing.length) h += `<p class="note" style="margin-top:0">No data for ${esc(train.missing.join(', '))} in this period – left out.</p>`;
+      if (ph === 'running') h += pastTrendCard(last ? last[0] : train.start, false);
       if (ph === 'done') {
         const s = train.summary, P = train.preview;
         const ct = train.trades.filter((t) => t.x).sort((a, b) => a.x.localeCompare(b.x));
@@ -1227,6 +1257,7 @@
           <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(s.win) ? '–' : Math.round(s.win * 100) + '%'}</div></div>
           <div style="margin-top:10px"><div class="m">Net P&amp;L</div><b class="${cls(s.pnl)}">${inr(s.pnl)}</b></div>
           <div style="margin-top:10px"><div class="m">vs Nifty</div><b class="${cls(s.ret - (s.nret || 0))}">${s.nret == null ? '–' : pct(s.ret - s.nret) + ' pts'}</b></div></div></div>`;
+        h += pastTrendCard('9999-12-31', true);
         h += `<div class="sec">Mistakes noted in this run</div>` + mistakesCard((train.tst.learning.mistakes || []), { empty: 'No mistakes noted in this run.' });
         h += `<div class="sec">Apply to the live brain</div><div class="card">`;
         if (s.taught) h += `<p class="empty">Done – your live brain now includes these ${train.tst.learning.closed.length} past trades as evidence.</p>`;
@@ -1278,7 +1309,7 @@
     h += `<div class="actions"><button class="btn" id="t_go">${train.mode === 'repeat' ? 'Start repeat training' : 'Start training'}</button></div>`;
     if (st.trainings.length) {
       h += `<div class="sec">Past training runs</div><div class="card">` + st.trainings.slice().reverse().map((x) => `<div class="row"><div><b>${esc(x.label)}</b><div class="m">${fdate(x.start)} – ${fdate(x.end)}${x.capital ? ` · ${inr(x.capital)}` : ''} · ${x.kind === 'repeat' ? 'search' : x.trades + ' trades'} · ${x.brain === 'fresh' ? 'fresh' : 'with lessons'}${x.taught ? ' · taught' : ''}</div></div>
-        <div class="r"><b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">${x.kind === 'repeat' ? `unseen ${pct(x.unseenBest)} vs ${pct(x.unseenBase)}` : `Nifty ${pct(x.nret)}`}</div></div></div>`).join('') + `</div>`;
+        <div class="r"><b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">${x.kind === 'repeat' ? `unseen ${pct(x.unseenBest)} vs ${pct(x.unseenBase)}` : `Nifty ${pct(x.nret)}`}${x.trend ? `<br>trend calls ${Math.round(x.trend.acc * 100)}%` : ''}</div></div></div>`).join('') + `</div>`;
     }
     h += `<p class="note">Training reuses past data, so good results here can be luck or overfitting – the live paper account is the real test.</p>`;
     return h;
@@ -1416,6 +1447,7 @@
     const TM = train.tst.learning.mistakes || [], tmNew = TM.filter((m) => !m.inherited), tmBlocked = TM.reduce((a, m) => a + (m.blocked || 0), 0);
     sum.mistakes = tmNew.length; sum.skipped = tmBlocked;
     return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}, ${E.brainParams(train.tst).quick ? 'quick' : 'normal'} trading) is done. I noted ${tmNew.length} mistake${tmNew.length === 1 ? '' : 's'} along the way and skipped repeating them ${tmBlocked}×. Trades lasted ${Number.isNaN(S2.avgDays) ? '–' : S2.avgDays.toFixed(1)} sessions on average${S2.targets ? `, ${S2.targets} hit the profit target` : ''}. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
+      (sum.trend ? `\n\nTrend calls: I called each stock's next 20 sessions ${sum.trend.n}× using only what I knew then – right ${Math.round(sum.trend.acc * 100)}% vs ${Math.round(sum.trend.base * 100)}% for always guessing${sum.trend.acc - sum.trend.base >= 0.04 ? '.' : ', so not much of an edge.'}` : '') +
       (top.length ? `\n\nMy most common mistakes:\n${top.map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : '') +
       `\n\n${ch.length ? `Say **apply** and I'll use what I learned: add these ${P.added} trades to my evidence and ${ch.join(', ')}.` : `Say **apply** and I'll add these ${P.added} trades to my evidence. None of my rules would change.`} Remember: a good result on the past can be luck.`;
   }
