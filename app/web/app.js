@@ -256,7 +256,7 @@
     h += `<div class="sec">Positions</div><div class="card">`;
     h += pos.length ? pos.map(([s, t]) => {
       const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
-      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}</div></div>
+      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}${tr.tp ? ` · target ${px(tr.tp)}` : ''}</div></div>
         <div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${inr((t.lastClose - tr.ep) * tr.q)}</div></div></div>`;
     }).join('') : `<p class="empty">No open positions – all ${inr(eq)} in cash.</p>`;
     h += `</div>`;
@@ -331,7 +331,9 @@
       <div><div class="m">Closed trades</div><div class="stat">${S.n}</div></div>
       <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(S.winRate) ? '–' : Math.round(S.winRate * 100) + '%'}</div></div>
       <div style="margin-top:10px"><div class="m">Avg win / loss</div><div><b class="up">${pct(S.avgWin)}</b> / <b class="down">${pct(S.avgLoss)}</b></div></div>
-      <div style="margin-top:10px"><div class="m">Net P&amp;L</div><div><b class="${cls(S.pnl)}">${inr(S.pnl)}</b></div></div></div></div>`;
+      <div style="margin-top:10px"><div class="m">Net P&amp;L</div><div><b class="${cls(S.pnl)}">${inr(S.pnl)}</b></div></div>
+      <div style="margin-top:10px"><div class="m">Avg days held</div><div><b>${Number.isNaN(S.avgDays) ? '–' : S.avgDays.toFixed(1)}</b></div></div>
+      <div style="margin-top:10px"><div class="m">Profit targets hit</div><div><b>${S.targets}</b></div></div></div></div>`;
     const tally = {};
     list.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
     const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
@@ -367,6 +369,15 @@
       <label>Amount (₹ – e.g. 50000, 50k, 1.5 lakh)</label><input id="m_amt" inputmode="decimal" placeholder="1 lakh">
       <div class="actions"><button class="btn sm" id="m_add">Add</button><button class="btn ghost sm" id="m_wd">Withdraw</button><button class="btn ghost sm" id="m_set">Set account to this</button></div>
       <p class="m" style="margin:10px 0 0">Added money is split equally across your stocks. Withdrawals come from cash only. Neither counts as profit or loss.</p></div>`;
+    const B = E.brainParams(st);
+    h += `<div class="sec">Trading style</div><div class="card"><div class="chips" style="margin:0">
+        <button class="chip ${!B.quick ? 'on' : ''}" data-tstyle="normal">Normal – ride trends</button>
+        <button class="chip ${B.quick ? 'on' : ''}" data-tstyle="quick">Quick – in and out</button></div>
+      <p class="m" style="margin:10px 0 0">${B.quick ? 'Enters fast on sharp dips, pullbacks and volume breakouts, and exits fast: at the profit target, the stop-loss or the time limit. Expect many small trades lasting days. More trades means more costs (STT, stamp duty) – they can eat small profits.' : 'Holds trends for weeks or months. Fewer trades, bigger wins and losses.'}</p>
+      ${B.quick ? `<label>Take profit at</label><div class="chips" style="margin:0">${[0, 1, 1.5, 2, 3].map((v) => `<button class="chip ${B.tpAtr === v ? 'on' : ''}" data-tp="${v}">${v ? '+' + v + '× ATR' : 'off'}</button>`).join('')}</div>
+        <label>Stop-loss</label><div class="chips" style="margin:0">${[1, 1.5, 2, 3].map((v) => `<button class="chip ${B.stopAtr === v ? 'on' : ''}" data-sl="${v}">${v}× ATR</button>`).join('')}</div>
+        <label>Time limit</label><div class="chips" style="margin:0">${[0, 3, 5, 10, 20].map((v) => `<button class="chip ${B.maxDays === v ? 'on' : ''}" data-md="${v}">${v ? v + ' sessions' : 'off'}</button>`).join('')}</div>
+        <p class="m" style="margin:10px 0 0">ATR = a stock's typical daily move. +2× ATR is roughly two normal days' move – often 3–5%.</p>` : ''}</div>`;
     h += `<div class="sec">Brain settings</div><div class="card"><ul class="tags" style="font-size:14px;color:var(--fg);margin:0">${E.describeParams(E.brainParams(st)).map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       <div class="actions"><button class="btn ghost sm" id="b_reset">Reset to defaults</button></div><p class="m" style="margin:8px 0 0">Repeat training (Train on the past → Repeat until best) can tune these.</p></div>`;
     h += `<div class="sec">Download your data</div><div class="card">
@@ -387,7 +398,7 @@
 
   // ---------------------------------------------------------------- training on the past
   const MIN_TRAIN = '2008-01-01';
-  let train = { phase: 'setup', preset: '5y', from: '', to: '', brain: 'fresh', speed: 4, mode: 'watch', rounds: 30, autoApply: false };
+  let train = { phase: 'setup', preset: '5y', from: '', to: '', brain: 'fresh', speed: 4, mode: 'watch', rounds: 30, autoApply: false, route: 'climb', style: 'account' };
   const yearsAgo = (n) => { const d = new Date(todayIST() + 'T00:00:00Z'); d.setUTCFullYear(d.getUTCFullYear() - n); return d.toISOString().slice(0, 10); };
   const PRESETS = {
     '1y': ['Last year', () => [yearsAgo(1), todayIST()]],
@@ -441,7 +452,8 @@
         btn.textContent = 'Update'; btn.classList.remove('stop'); $('progress').hidden = true;
         return startRepeat({ data, nifty, tickers, missing, lessons, capital, start, end });
       }
-      const tst = E.newTraining({ ...st.cfg, tickers, capital }, start, end, lessons);
+      const P = styleParams(train.style);
+      const tst = E.newTraining({ ...st.cfg, tickers, capital, stopAtr: P.stopAtr, brain: { ...P } }, start, end, lessons);
       progress(syms.length, syms.length, 'Warming up');
       await new Promise((ok) => setTimeout(ok, 30));
       const ctx = E.begin(tst, data, nifty, Date.now());
@@ -497,14 +509,22 @@
 
 
   // ---------------------------------------------------------------- repeat mode: re-run the past, tune settings
-  function startRepeat({ data, nifty, tickers, missing, lessons, capital, start, end }) {
+  const ROUTES = {
+    climb: ['Step by step', 'Changes one setting at a time and keeps whatever helps. Fast, but can get stuck on a "good enough" answer.'],
+    evolve: ['Evolution', 'Starts with a population of very different settings. The fittest survive, mix and mutate, generation after generation – explores much more widely.'],
+    walk: ['Walk forward', 'Learns on the past, trades the next stretch it has never seen, adds it to what it knows and moves on. Every result is earned on unseen data – the most honest test.'],
+  };
+  function startRepeat(args) {
+    const { data, nifty, tickers, missing, lessons, capital, start, end } = args;
     const days = nifty.bars.d.filter((d) => d >= start && d <= end);
     if (days.length < 120) { toast('Pick a longer period (at least 6 months)'); train.phase = 'setup'; return render(); }
+    if (train.route === 'walk') return startWalk(args, days);
     const split = days[Math.floor(days.length * 0.7)];
-    const base = E.brainParams(st);
+    const base = styleParams(train.style);
     const cfg = { ...st.cfg, tickers, capital };
-    const opt = E.makeOptimizer(base, { maxRounds: train.rounds, patience: 10, seed: Date.now() % 100000 });
-    Object.assign(train, { phase: 'repeating', rep: { data, nifty, cfg, lessons, start, end, split, base, opt, missing, stop: false, first: null }, runCapital: capital });
+    const seed = Date.now() % 100000;
+    const opt = train.route === 'evolve' ? E.makeEvolver(base, { maxRounds: train.rounds, popSize: 8, seed }) : E.makeOptimizer(base, { maxRounds: train.rounds, patience: 10, seed });
+    Object.assign(train, { phase: 'repeating', rep: { route: train.route, data, nifty, cfg, lessons, start, end, split, base, opt, missing, stop: false, first: null }, runCapital: capital });
     render();
     const round = () => {
       const R = train.rep; if (!R || train.phase !== 'repeating') return;
@@ -520,6 +540,86 @@
     setTimeout(round, 30);
   }
 
+
+  // walk forward: learn on an expanding window, trade the next unseen stretch, repeat
+  function startWalk({ data, nifty, tickers, missing, lessons, capital, start, end }, days) {
+    const F = 3, L0 = Math.floor(days.length * 0.4), size = Math.floor((days.length - L0) / F);
+    const folds = Array.from({ length: F }, (_, f) => ({ learnEnd: days[L0 + f * size - 1], start: days[L0 + f * size], end: f === F - 1 ? days[days.length - 1] : days[L0 + (f + 1) * size - 1] }));
+    const base = styleParams(train.style), cfg = { ...st.cfg, tickers, capital }, per = Math.max(5, Math.round(train.rounds / F));
+    const R = { route: 'walk', data, nifty, cfg, lessons, start, end, base, missing, folds, fold: 0, per, cur: E.normParams(base), stop: false, history: [], first: null };
+    R.opt = E.makeOptimizer(R.cur, { maxRounds: per, patience: 5, seed: 3 });
+    R.baseFull = E.evaluate(cfg, base, data, nifty, start, end, lessons);
+    Object.assign(train, { phase: 'repeating', rep: R, runCapital: capital });
+    render();
+    const round = () => {
+      if (train.rep !== R || train.phase !== 'repeating') return;
+      const F0 = R.folds[R.fold], p = R.stop ? null : R.opt.next();
+      if (p) {
+        const tst = E.evaluate(R.cfg, p, R.data, R.nifty, R.start, F0.learnEnd, R.lessons);
+        const s0 = E.periodStats(tst, R.start, F0.learnEnd);
+        const better = R.opt.report(p, s0.ret, { dd: s0.dd });
+        R.history.push({ round: R.history.length + 1, fold: R.fold + 1, params: E.normParams(p), score: s0.ret, dd: s0.dd, better });
+      } else {
+        // stretch finished: trade the unseen part with the best settings learned so far
+        if (R.opt.rounds) R.cur = R.opt.best;
+        const tst = E.evaluate(R.cfg, R.cur, R.data, R.nifty, R.start, F0.end, R.lessons);
+        Object.assign(F0, { params: R.cur, changes: E.describeParams(R.cur, R.base), res: E.periodStats(tst, F0.start, F0.end), baseRes: E.periodStats(R.baseFull, F0.start, F0.end) });
+        R.fold++;
+        if (R.stop || R.fold >= R.folds.length) return walkDone();
+        R.opt = E.makeOptimizer(R.cur, { maxRounds: R.per, patience: 5, seed: 3 + R.fold });
+      }
+      if (tab === 'train') render();
+      setTimeout(round, 15);
+    };
+    setTimeout(round, 30);
+  }
+
+  function walkDone() {
+    const R = train.rep, done = R.folds.filter((f) => f.res);
+    const comp = (k) => (done.reduce((m, f) => m * (1 + f[k].ret / 100), 1) - 1) * 100;
+    R.total = comp('res'); R.baseTotal = comp('baseRes');
+    R.final = R.cur; R.changes = E.describeParams(R.final, R.base);
+    R.good = R.changes.length > 0 && R.total > R.baseTotal;
+    R.fullBest = E.evaluate(R.cfg, R.final, R.data, R.nifty, R.start, R.end, R.lessons);
+    const label = train.preset === 'custom' ? `${fdate(R.start)} – ${fdate(R.end)}` : PRESETS[train.preset][0];
+    const sum = { id: Date.now().toString(36), at: nowIso(), kind: 'repeat', route: 'walk', label: `${label} · walk forward`, start: R.start, end: R.end,
+      brain: train.brain, stocks: R.cfg.tickers.length, capital: train.runCapital, ret: R.total, nret: null, dd: Math.min(0, ...done.map((f) => f.res.dd)),
+      trades: 0, win: NaN, pnl: 0, taught: false, unseenBest: R.total, unseenBase: R.baseTotal, changes: R.changes };
+    st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
+    R.sum = sum; train.phase = 'repeatDone'; store.save(st);
+    say(walkReport(), 'none');
+    if (train.autoApply && R.good) applyRepeat(true);
+    if (tab === 'train') render();
+  }
+
+  function walkReport() {
+    const R = train.rep, done = R.folds.filter((f) => f.res);
+    let t = `Walk-forward training done on ${fdate(R.start)} – ${fdate(R.end)}. Each time I learned on everything up to a date, then traded the next stretch without having seen it:`;
+    t += '\n' + done.map((f) => `- ${fdate(f.start)} – ${fdate(f.end)}: **${pct(f.res.ret)}** (current settings ${pct(f.baseRes.ret)}${f.res.nifty != null ? `, Nifty ${pct(f.res.nifty)}` : ''})`).join('\n');
+    t += `\n\nAll unseen, start to finish: **${pct(R.total)}** vs ${pct(R.baseTotal)} with my current settings.`;
+    t += R.changes.length ? `\n\nWhat I ended up with:\n${R.changes.map((c) => '- ' + c).join('\n')}` : '\n\nI kept my current settings every time.';
+    if (R.changes.length) t += R.good ? `\n\nThis beat my current settings on data I hadn't seen – the most trustworthy kind of result. Say **apply** to use these settings.` : `\n\nIt didn't beat my current settings on unseen data, so I recommend **not** applying. Say **apply anyway** if you want to.`;
+    return t;
+  }
+
+  function viewWalk() {
+    const R = train.rep, done = train.phase === 'repeatDone';
+    const fd = R.folds.filter((f) => f.res), comp = (k) => (fd.reduce((m, f) => m * (1 + f[k].ret / 100), 1) - 1) * 100;
+    let h = `<div class="card hero"><div class="m">Walk forward${done ? ' · finished' : ` · stretch ${Math.min(R.fold + 1, R.folds.length)} of ${R.folds.length}`} · ${fdate(R.start)} – ${fdate(R.end)} · ${inr(train.runCapital)}</div>
+      <div class="big" style="font-size:28px">${fd.length ? pct(comp('res')) : '…'}</div>
+      <p class="sub">${fd.length ? `earned on unseen data so far · current settings ${pct(comp('baseRes'))}` : `learning on ${fdate(R.start)} – ${fdate(R.folds[0].learnEnd)}…`}</p>
+      ${roundsChart(R.history)}`;
+    if (!done) h += `<div class="actions"><button class="btn warn sm" id="r_stop">Stop and check results</button></div>`;
+    h += `</div><div class="sec">Stretches</div><div class="card">` + R.folds.map((f, i) => `<div class="row"><div><b>${i + 1}. Learn to ${fdate(f.learnEnd)} → trade ${fdate(f.start)} – ${fdate(f.end)}</b><div class="m">${f.res ? esc(f.changes.join('; ') || 'current settings') : i === R.fold && !done ? 'learning…' : 'waiting'}</div></div>
+      <div class="r">${f.res ? `<b class="${cls(f.res.ret - f.baseRes.ret)}">${pct(f.res.ret)}</b><div class="m">current ${pct(f.baseRes.ret)}</div>` : ''}</div></div>`).join('') + `</div>`;
+    if (done) {
+      h += `<p class="sub">${!R.changes.length ? 'I kept the current settings throughout.' : R.good ? 'Beat the current settings on unseen data – the most trustworthy kind of result.' : 'Did not beat the current settings on unseen data – better not to apply.'}</p>`;
+      if (R.changes.length) h += `<div class="sec">Settings it ended with</div><div class="card"><ul class="tags" style="font-size:14px;color:var(--fg)">${R.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>`;
+      h += `<div class="actions">${R.sum.taught ? '<span class="m">Applied to the live brain.</span>' : R.good || !R.changes.length ? `<button class="btn sm" id="r_apply">Apply ${R.changes.length ? 'settings + lessons' : 'lessons'}</button>` : `<button class="btn warn sm" id="r_force">Apply anyway</button>`}<button class="btn ghost sm" id="t_new">Train again</button></div>`;
+    }
+    return h;
+  }
+
   function repeatDone() {
     const R = train.rep, o = R.opt;
     const fullBest = E.evaluate(R.cfg, o.best, R.data, R.nifty, R.start, R.end, R.lessons);
@@ -532,7 +632,7 @@
     });
     R.good = R.changes.length > 0 && R.unseenBest.ret > R.unseenBase.ret;
     const label = train.preset === 'custom' ? `${fdate(R.start)} – ${fdate(R.end)}` : PRESETS[train.preset][0];
-    const sum = { id: Date.now().toString(36), at: nowIso(), kind: 'repeat', label: `${label} · repeat ×${o.rounds}`, start: R.start, end: R.end,
+    const sum = { id: Date.now().toString(36), at: nowIso(), kind: 'repeat', route: R.route, label: `${label} · ${R.route === 'evolve' ? `evolution ×${o.rounds}` : `repeat ×${o.rounds}`}`, start: R.start, end: R.end,
       brain: train.brain, stocks: R.cfg.tickers.length, capital: train.runCapital, ret: R.bestTrain, nret: null, dd: o.history.find((h) => h.better && E.paramKey(h.params) === E.paramKey(o.best))?.dd || 0,
       trades: 0, win: NaN, pnl: 0, taught: false, unseenBest: R.unseenBest.ret, unseenBase: R.unseenBase.ret, changes: R.changes };
     st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
@@ -544,8 +644,8 @@
 
   function repeatReport() {
     const R = train.rep, o = R.opt;
-    const why = o.local ? 'no single change made it better any more' : o.stale >= 10 ? '10 rounds in a row found nothing better' : `I reached the ${o.maxRounds}-round limit`;
-    let t = `Repeat training done: **${o.rounds} rounds** on ${fdate(R.start)} – ${fdate(R.split)}. I stopped because ${why}.`;
+    const why = R.route === 'evolve' ? `I bred ${o.generations} generations of ${o.rounds / o.generations | 0}` : o.local ? 'no single change made it better any more' : o.stale >= 10 ? '10 rounds in a row found nothing better' : `I reached the ${o.maxRounds}-round limit`;
+    let t = `${R.route === 'evolve' ? 'Evolution' : 'Repeat'} training done: **${o.rounds} rounds** on ${fdate(R.start)} – ${fdate(R.split)}. I stopped because ${why}.`;
     t += R.changes.length ? `\n\nBest settings made **${pct(R.bestTrain)}** there, vs ${pct(R.baseTrain)} with my current settings. The changes:\n${R.changes.map((c) => '- ' + c).join('\n')}`
       : `\n\nNothing beat my current settings (${pct(R.baseTrain)}).`;
     if (R.changes.length) {
@@ -559,7 +659,7 @@
   function applyRepeat(auto, force) {
     const R = train.rep; if (!R || train.phase !== 'repeatDone') return say('There\'s no finished repeat training. Try **train on the 2008 crisis until max profit**.');
     if (!R.good && !force && R.changes.length) return say('Those settings failed the unseen-data test, so I didn\'t apply them. Say **apply anyway** if you\'re sure.');
-    const ch = R.changes.length ? E.applyParams(st, R.opt.best, todayIST(), nowIso()) : [];
+    const ch = R.changes.length ? E.applyParams(st, R.final || R.opt.best, todayIST(), nowIso()) : [];
     const t = E.teach(st, R.fullBest, todayIST(), `${R.sum.label}`);
     R.sum.taught = true; const h = st.trainings.find((x) => x.id === R.sum.id); if (h) h.taught = true;
     store.save(st);
@@ -578,8 +678,9 @@
   }
 
   function viewRepeat() {
+    if (train.rep.route === 'walk') return viewWalk();
     const R = train.rep, o = R.opt, done = train.phase === 'repeatDone';
-    let h = `<div class="card hero"><div class="m">${done ? 'Repeat training finished' : 'Repeat training'} · ${fdate(R.start)} – ${fdate(R.end)} · ${inr(train.runCapital)}</div>
+    let h = `<div class="card hero"><div class="m">${R.route === 'evolve' ? `Evolution${done ? ' finished' : ` · generation ${o.gen} of ${o.generations}`}` : done ? 'Repeat training finished' : 'Repeat training'} · ${fdate(R.start)} – ${fdate(R.end)} · ${inr(train.runCapital)}</div>
       <div class="big" style="font-size:28px">${o.bestScore > -Infinity ? pct(o.bestScore) : '…'}</div>
       <p class="sub">best profit on the training part (${fdate(R.start)} – ${fdate(R.split)}) after ${o.rounds} of up to ${o.maxRounds} rounds${R.first != null ? ` · first round ${pct(R.first)}` : ''}</p>
       ${roundsChart(o.history)}`;
@@ -594,7 +695,7 @@
       h += `<div class="actions">${R.sum.taught ? '<span class="m">Applied to the live brain.</span>' : R.good || !R.changes.length ? `<button class="btn sm" id="r_apply">Apply ${R.changes.length ? 'settings + lessons' : 'lessons'}</button>` : `<button class="btn warn sm" id="r_force">Apply anyway</button>`}<button class="btn ghost sm" id="t_new">Train again</button></div>`;
     }
     const last = o.history.slice(-12).reverse();
-    h += `<div class="sec">Rounds</div><div class="card">` + (last.length ? last.map((x) => `<div class="row"><div><b>Round ${x.round}</b>${x.better ? ' <span class="pill on" style="border-color:var(--acc);color:var(--acc)">new best</span>' : ''}<div class="m">${esc(E.describeParams(x.params, R.base).join('; ') || 'current settings')}</div></div><div class="r"><b class="${cls(x.score)}">${pct(x.score)}</b><div class="m">worst drop ${pct(x.dd)}</div></div></div>`).join('') : '<p class="empty">Starting…</p>') + `</div>`;
+    h += `<div class="sec">Rounds</div><div class="card">` + (last.length ? last.map((x) => `<div class="row"><div><b>Round ${x.round}${x.gen ? ` · gen ${x.gen}` : ''}</b>${x.better ? ' <span class="pill on" style="border-color:var(--acc);color:var(--acc)">new best</span>' : ''}<div class="m">${esc(E.describeParams(x.params, R.base).join('; ') || 'current settings')}</div></div><div class="r"><b class="${cls(x.score)}">${pct(x.score)}</b><div class="m">worst drop ${pct(x.dd)}</div></div></div>`).join('') : '<p class="empty">Starting…</p>') + `</div>`;
     return h;
   }
 
@@ -655,6 +756,9 @@
     if (train.preset === 'custom') h += `<div class="grid"><div><label>From</label><input type="date" id="t_from" min="${MIN_TRAIN}" max="${todayIST()}" value="${a}"></div><div><label>To</label><input type="date" id="t_to" min="${MIN_TRAIN}" max="${todayIST()}" value="${b}"></div></div>`;
     h += `<p class="m" style="margin:12px 0 0">${fdate(a)} – ${fdate(b)} · about ${Math.round(((Date.parse(b) - Date.parse(a)) / 864e5) * 252 / 365)} sessions. Earliest: 2008 (Nifty data).</p></div>`;
     const nl = E.lessonsBefore(st, a).length;
+    h += `<div class="sec">Trading style for this run</div><div class="card"><div class="chips" style="margin:0">
+        ${[['account', `Like my account (${isQuick() ? 'quick' : 'normal'})`], ['normal', 'Normal – ride trends'], ['quick', 'Quick – in and out']].map(([k, t]) => `<button class="chip ${train.style === k ? 'on' : ''}" data-style="${k}">${t}</button>`).join('')}</div>
+      <p class="m" style="margin:10px 0 0">${(train.style === 'quick' || (train.style === 'account' && isQuick())) ? 'Fast entries (sharp dips, pullbacks, volume breakouts) and fast exits: profit target, tight stop-loss and a time limit. Trades last days, not months.' : 'Trend strategies that hold for weeks or months.'}</p></div>`;
     h += `<div class="sec">Brain</div><div class="card">
       <label class="switch" style="margin:0"><input type="radio" name="tb" value="fresh" ${train.brain === 'fresh' ? 'checked' : ''}><span><b>Fresh brain</b> – learns only from this period</span></label>
       <label class="switch" style="margin:12px 0 0"><input type="radio" name="tb" value="lessons" ${train.brain === 'lessons' ? 'checked' : ''}><span><b>With earlier lessons</b> – ${nl} trades that ended before ${fdate(a)} (an honest test: no future knowledge)</span></label></div>`;
@@ -662,6 +766,8 @@
         <button class="chip ${train.mode === 'watch' ? 'on' : ''}" data-mode="watch">Watch one run</button>
         <button class="chip ${train.mode === 'repeat' ? 'on' : ''}" data-mode="repeat">Repeat until best</button></div>
       <p class="m" style="margin:10px 0 0">${train.mode === 'repeat' ? 'Re-runs the period again and again, changing one brain setting each round and keeping whatever makes more profit, until nothing improves. It tunes on the first 70% and then checks the winner on the last 30%, which it never saw.' : 'Trades the period once, day by day, so you can watch.'}</p>
+      ${train.mode === 'repeat' ? `<label>Learning route</label><div class="chips" style="margin:0">${Object.entries(ROUTES).map(([k, v]) => `<button class="chip ${train.route === k ? 'on' : ''}" data-route="${k}">${v[0]}</button>`).join('')}</div>
+        <p class="m" style="margin:8px 0 0">${ROUTES[train.route][1]}</p>` : ''}
       ${train.mode === 'repeat' ? `<label>Maximum rounds</label><div class="chips" style="margin:0">${[10, 20, 30, 50].map((x) => `<button class="chip ${x === train.rounds ? 'on' : ''}" data-rounds="${x}">${x}</button>`).join('')}</div>` : ''}
       <label class="switch" style="margin:14px 0 0"><input type="checkbox" id="t_auto" ${train.autoApply ? 'checked' : ''}><span>Apply what it learns to my live brain automatically${train.mode === 'repeat' ? ' (only if it passes the unseen-data test)' : ''}</span></label></div>`;
     h += `<div class="sec">Paper money for this run</div><div class="card">
@@ -670,7 +776,7 @@
     if (train.mode === 'watch') h += `<div class="sec">Replay speed</div><div class="card"><div class="chips" style="margin:0">${SPEEDS.map((x) => `<button class="chip ${x === train.speed ? 'on' : ''}" data-speed="${x}">${x}× · ${x * 2} days/s</button>`).join('')}</div></div>`;
     h += `<div class="actions"><button class="btn" id="t_go">${train.mode === 'repeat' ? 'Start repeat training' : 'Start training'}</button></div>`;
     if (st.trainings.length) {
-      h += `<div class="sec">Past training runs</div><div class="card">` + st.trainings.slice().reverse().map((x) => `<div class="row"><div><b>${esc(x.label)}</b><div class="m">${fdate(x.start)} – ${fdate(x.end)}${x.capital ? ` · ${inr(x.capital)}` : ''} · ${x.trades} trades · ${x.brain === 'fresh' ? 'fresh' : 'with lessons'}${x.taught ? ' · taught' : ''}</div></div>
+      h += `<div class="sec">Past training runs</div><div class="card">` + st.trainings.slice().reverse().map((x) => `<div class="row"><div><b>${esc(x.label)}</b><div class="m">${fdate(x.start)} – ${fdate(x.end)}${x.capital ? ` · ${inr(x.capital)}` : ''} · ${x.kind === 'repeat' ? 'search' : x.trades + ' trades'} · ${x.brain === 'fresh' ? 'fresh' : 'with lessons'}${x.taught ? ' · taught' : ''}</div></div>
         <div class="r"><b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">${x.kind === 'repeat' ? `unseen ${pct(x.unseenBest)} vs ${pct(x.unseenBase)}` : `Nifty ${pct(x.nret)}`}</div></div></div>`).join('') + `</div>`;
     }
     h += `<p class="note">Training reuses past data, so good results here can be luck or overfitting – the live paper account is the real test.</p>`;
@@ -689,6 +795,8 @@
     if (t) t.onchange = () => { train.to = t.value; render(); };
     on('t_go', startTraining);
     document.querySelectorAll('[data-mode]').forEach((b) => { b.onclick = () => { train.mode = b.dataset.mode; render(); }; });
+    document.querySelectorAll('[data-style]').forEach((b) => { b.onclick = () => { train.style = b.dataset.style; render(); }; });
+    document.querySelectorAll('[data-route]').forEach((b) => { b.onclick = () => { train.route = b.dataset.route; render(); }; });
     document.querySelectorAll('[data-rounds]').forEach((b) => { b.onclick = () => { train.rounds = +b.dataset.rounds; render(); }; });
     const au = $('t_auto'); if (au) au.onchange = () => { train.autoApply = au.checked; };
     on('r_stop', () => { if (train.rep) train.rep.stop = true; });
@@ -698,9 +806,30 @@
     on('t_skip', () => { E.stepDays(train.ctx, Infinity); trainDone(); });
     on('t_stop', () => { train.ctx.dates.length = train.ctx.pos; trainDone(); });
     on('t_teach', teachLive);
-    on('t_new', () => { train = { phase: 'setup', preset: train.preset, from: train.from, to: train.to, brain: train.brain, speed: train.speed, mode: train.mode, rounds: train.rounds, autoApply: train.autoApply, capital: train.capital }; render(); });
+    on('t_new', () => { train = { phase: 'setup', preset: train.preset, from: train.from, to: train.to, brain: train.brain, speed: train.speed, mode: train.mode, rounds: train.rounds, autoApply: train.autoApply, capital: train.capital, route: train.route, style: train.style }; render(); });
   }
 
+
+  // ---------------------------------------------------------------- trading style (normal / quick)
+  const isQuick = () => !!E.brainParams(st).quick;
+  /** Brain settings for a style: 'account' = what the live brain uses now. */
+  function styleParams(style) {
+    const B = E.brainParams(st);
+    if (style === 'quick') return B.quick ? B : { ...B, ...E.QUICK_PRESET, strategies: null };
+    if (style === 'normal') return B.quick ? { ...B, ...E.NORMAL_PRESET, strategies: null } : B;
+    return B;
+  }
+  function setStyle(quick, extra) {
+    const B = E.brainParams(st);
+    const next = quick ? { ...B, ...(B.quick ? {} : { ...E.QUICK_PRESET, strategies: null }), ...(extra || {}) } : { ...B, ...E.NORMAL_PRESET, strategies: null, ...(extra || {}) };
+    const ch = E.applyParams(st, next, todayIST(), nowIso()); store.save(st);
+    return ch;
+  }
+  const styleText = () => {
+    const B = E.brainParams(st);
+    return B.quick ? `**Quick trading**: short swings with ${E.QUICK.map((k) => E.STRATEGIES[k].label).join(', ')}. Profit target ${B.tpAtr ? '+' + B.tpAtr + '× ATR' : 'off'}, stop-loss ${B.stopAtr ? B.stopAtr + '× ATR' : 'off'}, time limit ${B.maxDays ? B.maxDays + ' sessions' : 'off'}.`
+      : `**Normal trading**: ride trends for weeks or months with ${E.NORMAL.map((k) => E.STRATEGIES[k].label).join(', ')}. Stop-loss ${B.stopAtr ? B.stopAtr + '× ATR' : 'off'}.`;
+  };
 
   // ---------------------------------------------------------------- paper money
   /** "50000", "50,000", "50k", "1.5 lakh", "2 crore", "₹3,00,000" → rupees (or null). */
@@ -767,7 +896,7 @@
     const acts = [];
     Object.entries(st.tickers).forEach(([s, t]) => t.live.trades.forEach((x) => {
       if (x.e > (prev || '')) acts.push([x.e, `Bought ${x.q} ${sym(s)} at ${px(x.ep)} (${E.STRATEGIES[x.s]?.label || ''})`]);
-      if (x.x && x.x > (prev || '')) acts.push([x.x, `Sold ${sym(s)} at ${px(x.xp)} – ${x.pnl >= 0 ? 'made' : 'lost'} ${inr(Math.abs(x.pnl))} (${pct(x.ret)})${x.r === 'stop' ? ', stop-loss hit' : ''}`]);
+      if (x.x && x.x > (prev || '')) acts.push([x.x, `Sold ${sym(s)} at ${px(x.xp)} – ${x.pnl >= 0 ? 'made' : 'lost'} ${inr(Math.abs(x.pnl))} (${pct(x.ret)})${x.r === 'stop' ? ', stop-loss hit' : x.r === 'target' ? ', profit target hit' : x.r === 'time' ? ', time limit' : ''}${x.bars ? ` after ${x.bars} session${x.bars > 1 ? 's' : ''}` : ''}`]);
     }));
     st.archive.forEach((x) => { if (x.x && x.x > (prev || '')) acts.push([x.x, `Sold ${sym(x.sym)} at ${px(x.xp)} (${pct(x.ret)}) and removed it`]); });
     acts.sort((a, b) => a[0].localeCompare(b[0]));
@@ -783,13 +912,14 @@
     train.trades.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
     const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 3);
     const P = train.preview, ch = [...P.newRules.map((k) => `start avoiding ${E.FEATURES[k].label.toLowerCase()}`), ...P.dropped.map((k) => `stop avoiding ${E.FEATURES[k].label.toLowerCase()}`)];
-    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}) is done. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
+    const S2 = E.stats(train.trades);
+    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}, ${E.brainParams(train.tst).quick ? 'quick' : 'normal'} trading) is done. Trades lasted ${Number.isNaN(S2.avgDays) ? '–' : S2.avgDays.toFixed(1)} sessions on average${S2.targets ? `, ${S2.targets} hit the profit target` : ''}. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
       (top.length ? `\n\nMy most common mistakes:\n${top.map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : '') +
       `\n\n${ch.length ? `Say **apply** and I'll use what I learned: add these ${P.added} trades to my evidence and ${ch.join(', ')}.` : `Say **apply** and I'll add these ${P.added} trades to my evidence. None of my rules would change.`} Remember: a good result on the past can be luck.`;
   }
 
   // what Moli understands
-  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons", "with 10 lakh", "until max profit", "30 rounds"), **apply** what it learned, show or **reset brain** settings, **teach**, say when the **market opens**, and **download trades** (or equity, brain log, history, backup).';
+  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons", "with 10 lakh", "until max profit", "30 rounds", "evolution", "walk forward"), **apply** what it learned, show or **reset brain** settings, **quick mode** / **normal mode** (in and out fast vs ride trends; **take profit at 2 ATR**, **time limit 5 days**, **stop-loss 1.5 ATR**, **train quick last 5 years**), **teach**, say when the **market opens**, and **download trades** (or equity, brain log, history, backup).';
   async function respond(text) {
     const q = text.trim(), l = q.toLowerCase();
     const known = new Set([...Object.values(CATALOG).flat(), ...st.cfg.tickers.map(sym)]);
@@ -809,7 +939,7 @@
       if (train.phase === 'done' && !train.summary.taught) return teachLive();
       return say('There\'s nothing new to apply. Run a training first – e.g. **train on the 2008 crisis** or **train last 5 years until max profit**.');
     }
-    if (/\btrain|practi[cs]e|backtest|optimi[sz]e|until max|max(imum)? profit\b/.test(l)) {
+    if (/\btrain|practi[cs]e|backtest|optimi[sz]e|until max|max(imum)? profit|evolv|walk forward|learn differently|alternat\w* route\b/.test(l)) {
       const yrs = l.match(/(19|20)\d\d/g);
       if (/2008|crisis|crash of 08|gfc/.test(l) && !(yrs && yrs.length >= 2)) train.preset = 'gfc';
       else if (/covid|2020|pandemic/.test(l) && !(yrs && yrs.length >= 2)) train.preset = 'covid';
@@ -817,26 +947,50 @@
       else { const m = l.match(/(\d+)\s*(y|yr|year)/); train.preset = m ? ({ 1: '1y', 3: '3y', 5: '5y', 10: '10y' }[m[1]] || 'custom') : '5y';
         if (train.preset === 'custom' && m) { train.from = yearsAgo(+m[1]); train.to = todayIST(); } }
       train.brain = /lesson|experience|what you know/.test(l) ? 'lessons' : 'fresh';
+      train.style = /\b(quick|fast|short[- ]term|swing|in and out)\b/.test(l) ? 'quick' : /\b(normal|long[- ]term|trend)\b/.test(l) ? 'normal' : 'account';
       const mm = l.match(/(?:₹|rs\.?\s*|with\s+|using\s+)(\d[\d,.]*\s*(?:k|lakhs?|lacs?|crores?|cr)?)\b|(\d[\d,.]*\s*(?:k|lakhs?|lacs?|crores?|cr))\b/);
       const ta = mm && parseAmount(mm[1] || mm[2]);
       if (ta && !/^(19|20)\d\d$/.test((mm[1] || mm[2]).trim())) { if (ta < 10000) return say('Use at least ₹10,000 for a training run.'); train.capital = ta; }
       train.speed = 64; train.phase = 'setup';
-      train.mode = /repeat|until|optimi[sz]|best setting|max(imum)? profit|tune|again and again/.test(l) ? 'repeat' : 'watch';
+      train.route = /walk|rolling|step forward|move forward|realistic|honest/.test(l) ? 'walk' : /evolv|genetic|population|different(ly)?|alternat|another way|other way|explore/.test(l) ? 'evolve' : 'climb';
+      train.mode = train.route !== 'climb' || /repeat|until|optimi[sz]|best setting|max(imum)? profit|tune|again and again/.test(l) ? 'repeat' : 'watch';
       const rr = l.match(/(\d+)\s*(?:rounds?|times)/); if (rr) train.rounds = Math.min(Math.max(+rr[1], 3), 60);
       if (/auto(matically)?\s*apply|apply automatically/.test(l)) train.autoApply = true;
       const [a, b] = trainRange();
-      say(train.mode === 'repeat'
+      say(train.mode === 'repeat' && train.route === 'walk'
+        ? `Starting walk-forward training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: I'll learn on the first 40%, then trade three stretches I haven't seen, learning more after each. Open **Train on the past** in the menu to watch.`
+        : train.mode === 'repeat' && train.route === 'evolve'
+        ? `Starting evolution training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: ${Math.max(2, Math.round(train.rounds / 8))} generations of 8 very different brain settings; the fittest survive and mix. I'll tune on the first 70% and test the winner on the last 30%.`
+        : train.mode === 'repeat'
         ? `Starting repeat training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: up to ${train.rounds} rounds, changing one setting at a time and keeping whatever makes more profit. I'll tune on the first 70% and test the winner on the last 30%. Open **Train on the past** in the menu to watch.`
         : `Starting a training run on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())} and ${train.brain === 'fresh' ? 'a fresh brain' : 'only lessons from before ' + fdate(a)}. I'll tell you how it went – or open **Train on the past** in the menu to watch.`);
       return startTraining();
     }
     if (/\b(resume|unpause|start trading|continue)\b/.test(l)) { if (!E.isPaused(st)) return say('I\'m not paused – trading as normal.'); E.setPause(st, null, todayIST(), nowIso()); store.save(st); return say('Resumed. I\'ll buy again when a strategy I trust gives a signal.'); }
-    if (/\b(stop|sell (all|everything)|exit all|close all)\b/.test(l)) {
+    if (/\b(stop|sell (all|everything)|exit all|close all)\b/.test(l) && !/stop[- ]?loss/.test(l)) {
       if (!confirm('Sell every position at the next open and stop buying?')) return say('OK, I won\'t.');
       E.setPause(st, 'stop', todayIST(), nowIso()); store.save(st);
       const n = Object.values(st.tickers).filter((t) => t.live.qty).length;
       return say(`Stopped. ${n ? `I'll sell all ${n} position${n > 1 ? 's' : ''} at the next open` : 'I hold nothing'} and won't buy until you say **resume**.`);
     }
+    if (/\b(quick|fast|short[- ]term|swing|scalp|in and out)\b/.test(l) && !/\btrain|practi[cs]e\b/.test(l) || /\b(normal|long[- ]term|slow)\s*(mode|trading|style)?\b/.test(l) && /\b(mode|trading|style|switch|go|use)\b/.test(l) && !/\btrain\b/.test(l)) {
+      const quick = /\b(quick|fast|short[- ]term|swing|scalp|in and out)\b/.test(l) && !/\b(stop|turn off|disable|no more)\b.*\bquick/.test(l);
+      const ch = setStyle(quick);
+      return say(`${ch.length ? 'Done. ' : 'Already set. '}${styleText()}${quick ? `\n\nI'll learn which quick strategy works on each stock and which entries keep losing. Change the target with e.g. **take profit at 3 ATR** or **time limit 5 days**. To find the best target and time limit, say **train quick last 5 years until max profit**.\n\nHonest note: quick trades pay STT and stamp duty every time – many small trades can turn a small edge into a loss.` : ''}`);
+    }
+    if (/\b(take profit|profit target|target)\b/.test(l) && /\d/.test(l) && !/\btrain\b/.test(l)) {
+      const v = parseFloat(l.match(/(\d+(?:\.\d+)?)/)[1]); setStyle(true, { tpAtr: Math.min(Math.max(v, 0), 10) });
+      return say(`Profit target set to +${v}× ATR. ${styleText()}`);
+    }
+    if (/\b(time limit|max(imum)? days|exit after|sell after|hold (for )?max)\b/.test(l) && /\d/.test(l)) {
+      const v = Math.round(parseFloat(l.match(/(\d+)/)[1])); setStyle(true, { maxDays: Math.min(Math.max(v, 0), 120) });
+      return say(`Time limit set to ${v} sessions. ${styleText()}`);
+    }
+    if (/\b(stop[- ]?loss)\b/.test(l) && /\d/.test(l)) {
+      const v = parseFloat(l.match(/(\d+(?:\.\d+)?)/)[1]); setStyle(isQuick(), { stopAtr: Math.min(Math.max(v, 0), 10) });
+      return say(`Stop-loss set to ${v}× ATR. ${styleText()}`);
+    }
+    if (/\b(style|mode)\b/.test(l) && /\b(what|which|my|current)\b/.test(l)) return say(styleText());
     if (/\bpause\b/.test(l)) { E.setPause(st, 'pause', todayIST(), nowIso()); store.save(st); return say('Paused. No new buys – but open positions keep their stop-loss and exit signals. Say **resume** when you\'re ready.'); }
     const amt = parseAmount(l);
     if (/\b(deposit|withdraw|top ?up|capital|money|cash|funds?|rupees?)\b|₹|\brs\b/.test(l) || (amt && /^(add|put|remove|take|withdraw|set|change|make|increase|reduce)\b/.test(l))) {
@@ -899,7 +1053,7 @@
     const s = [];
     if ((train.phase === 'done' && train.summary && !train.summary.taught) || (train.phase === 'repeatDone' && train.rep.good && !train.rep.sum.taught)) s.push('Apply');
     if (E.isPaused(st)) s.push('Resume');
-    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Add 1 lakh', 'Train on the 2008 crisis', 'Train last 5 years until max profit', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
+    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Add 1 lakh', 'Train on the 2008 crisis', 'Train last 5 years until max profit', 'Walk forward last 5 years', 'Evolve on the 2008 crisis', 'Quick mode', 'Train quick last 5 years until max profit', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
     return s.slice(0, 8);
   }
 
@@ -1023,6 +1177,10 @@
       const a = parseAmount($('m_amt').value); if (!a) return toast('Type an amount, e.g. 50000 or 1 lakh');
       const msg = changeMoney(mode, a); toast(msg.replace(/\*\*/g, '').split('. ')[0]); render();
     };
+    document.querySelectorAll('[data-tstyle]').forEach((b) => { b.onclick = () => { const ch = setStyle(b.dataset.tstyle === 'quick'); toast(ch.length ? (b.dataset.tstyle === 'quick' ? 'Quick trading on' : 'Normal trading on') : 'No change'); render(); }; });
+    document.querySelectorAll('[data-tp]').forEach((b) => { b.onclick = () => { setStyle(true, { tpAtr: +b.dataset.tp }); render(); }; });
+    document.querySelectorAll('[data-sl]').forEach((b) => { b.onclick = () => { setStyle(true, { stopAtr: +b.dataset.sl }); render(); }; });
+    document.querySelectorAll('[data-md]').forEach((b) => { b.onclick = () => { setStyle(true, { maxDays: +b.dataset.md }); render(); }; });
     on('b_reset', () => { const ch = E.applyParams(st, { ...E.BRAIN_DEFAULTS, stopAtr: 3 }, todayIST(), nowIso()); store.save(st); toast(ch.length ? 'Brain settings reset' : 'Already on defaults'); render(); });
     on('m_add', money('add')); on('m_wd', money('withdraw')); on('m_set', money('set'));
     const rem = $('s_rem');

@@ -16,8 +16,11 @@
   const REVIEW_EVERY = 21, MIN_HISTORY = 120, HYST = 0.2, EQ_KEEP = 260;
   const RULE_MIN_N = 12, RULE_WINDOW = 400, RF = 6;
   // Brain settings: defaults, overridable per account (st.cfg.brain) – tuned by repeat-training mode.
-  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null };
+  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null, quick: false, tpAtr: 0, maxDays: 0 };
+  const QUICK_PRESET = { quick: true, stopAtr: 2, tpAtr: 2, maxDays: 10, minScore: 0.3, reviewEvery: 21 };
+  const NORMAL_PRESET = { quick: false, stopAtr: 3, tpAtr: 0, maxDays: 0 };
   const brainParams = (st) => ({ ...BRAIN_DEFAULTS, stopAtr: st.cfg.stopAtr, ...(st.cfg.brain || {}) });
+  const allowedStrategies = (B) => (B.strategies ? B.strategies.filter((k) => !!STRATEGIES[k].quick === !!B.quick) : null) || (B.quick ? QUICK : NORMAL);
 
   // ------------------------------------------------------------------ costs (algo/costs.py)
   function cost(t, side) {
@@ -100,7 +103,19 @@
     bollinger_reversion: { label: 'Bollinger reversion', fn: (b) => {
       const mid = sma(b.c, 20), sd = rollStd(b.c, 20);
       return latch(b.c.map((c, i) => c < mid[i] - 2 * sd[i]), b.c.map((c, i) => c > mid[i])); } },
+    // ---- quick (short-swing) strategies: fast entries; exits mostly via profit target / stop / time limit
+    quick_dip: { label: 'Quick dip (RSI-2)', quick: true, fn: (b) => {
+      const r = rsi(b.c, 2), s200 = sma(b.c, 200), s5 = sma(b.c, 5);
+      return latch(r.map((x, i) => x < 10 && b.c[i] > s200[i]), b.c.map((c, i) => c > s5[i])); } },
+    quick_pullback: { label: 'Pullback to EMA 20', quick: true, fn: (b) => {
+      const e20 = ema(b.c, 20), e50 = ema(b.c, 50);
+      return latch(b.c.map((c, i) => e20[i] > e50[i] && b.l[i] <= e20[i] && c > e20[i] && c > b.o[i]), b.c.map((c, i) => c < e50[i])); } },
+    quick_breakout: { label: 'Volume breakout', quick: true, fn: (b) => {
+      const hi = rollPrev(b.h, 20, (w) => Math.max(...w)), lo = rollPrev(b.l, 10, (w) => Math.min(...w)), va = sma(b.v, 20);
+      return latch(b.c.map((c, i) => c > hi[i] && va[i] > 0 && b.v[i] > 1.5 * va[i]), b.c.map((c, i) => c < lo[i])); } },
   };
+  const QUICK = Object.keys(STRATEGIES).filter((k) => STRATEGIES[k].quick);
+  const NORMAL = Object.keys(STRATEGIES).filter((k) => !STRATEGIES[k].quick);
 
   const FEATURES = {
     market_down: { label: 'Nifty below its 200-day average', lesson: 'Buying while the whole market is in a downtrend' },
@@ -169,7 +184,8 @@
 
   // ------------------------------------------------------------------ trader (algo/engine.py Trader)
   function newTrader(cash, cfg) {
-    return { cash, slip: cfg.slippage, stopAtr: cfg.stopAtr, riskPct: cfg.riskPct, qty: 0, stop: null,
+    const b = cfg.brain || {};
+    return { cash, slip: cfg.slippage, stopAtr: cfg.stopAtr, riskPct: cfg.riskPct, tpAtr: b.tpAtr || 0, maxDays: b.maxDays || 0, qty: 0, stop: null,
       pending: '', pAtr: 0, pFeat: null, pStrat: '', armed: false, costs: 0, trades: [], eq: [] };
   }
   function tBuy(t, day, open) {
@@ -183,7 +199,8 @@
     if (q <= 0) return;
     const c = cost(q * p, 'BUY');
     t.cash -= q * p + c; t.costs += c; t.qty = q; t.stop = stop;
-    t.trades.push({ e: day, ep: p, q, ec: c, stop, f: t.pFeat, s: t.pStrat, bars: 0 });
+    t.tp = t.tpAtr > 0 && t.pAtr > 0 ? p + t.tpAtr * t.pAtr : null;
+    t.trades.push({ e: day, ep: p, q, ec: c, stop, tp: t.tp, f: t.pFeat, s: t.pStrat, bars: 0 });
   }
   function tSell(t, day, px, reason) {
     const p = px * (1 - t.slip / 100), c = cost(t.qty * p, 'SELL');
@@ -191,20 +208,23 @@
     const tr = t.trades[t.trades.length - 1];
     Object.assign(tr, { x: day, xp: p, xc: c, r: reason });
     tr.pnl = (p - tr.ep) * tr.q - tr.ec - c; tr.ret = tr.pnl / (tr.ep * tr.q) * 100;
-    t.qty = 0; t.stop = null;
+    t.qty = 0; t.stop = null; t.tp = null;
     return tr;
   }
   function onBar(t, day, o, h, l, c, target, a, allow, feat, strat) {
     let closed = null;
     if (t.pending === 'BUY' && t.qty === 0) tBuy(t, day, o);
-    else if (t.pending === 'SELL' && t.qty > 0) closed = tSell(t, day, o, 'signal');
-    t.pending = '';
+    else if (t.pending === 'SELL' && t.qty > 0) closed = tSell(t, day, o, t.pReason || 'signal');
+    t.pending = ''; t.pReason = '';
     if (t.qty > 0 && t.stop !== null && l <= t.stop) { closed = tSell(t, day, Math.min(o, t.stop), 'stop'); t.armed = false; }
+    // profit target: sold as soon as the price trades at the target (at the open if it gaps above it)
+    if (t.qty > 0 && t.tp && h >= t.tp) { closed = tSell(t, day, Math.max(o, t.tp), 'target'); t.armed = false; }
     if (t.qty > 0) t.trades[t.trades.length - 1].bars++;
     if (target === 0) t.armed = true;
     if (t.qty === 0 && target === 1 && t.armed && allow) {
       t.pending = 'BUY'; t.pAtr = a && !isn(a) ? a : 0; t.pFeat = feat; t.pStrat = strat;
     } else if (t.qty > 0 && target === 0) t.pending = 'SELL';
+    else if (t.qty > 0 && t.maxDays > 0 && t.trades[t.trades.length - 1].bars >= t.maxDays) { t.pending = 'SELL'; t.pReason = 'time'; t.armed = false; }
     t.eq.push(t.cash + t.qty * c);
     if (t.eq.length > EQ_KEEP) t.eq.shift();
     return closed;
@@ -321,7 +341,11 @@
   }
 
   function ensureTicker(st, sym) {
-    if (st.tickers[sym]) return st.tickers[sym];
+    if (st.tickers[sym]) {
+      const T = st.tickers[sym];
+      for (const k in STRATEGIES) if (!T.shadows[k]) T.shadows[k] = newTrader(st.slice, st.cfg);
+      return T;
+    }
     const alloc = st.slice, sh = {};
     for (const k in STRATEGIES) sh[k] = newTrader(alloc, st.cfg);
     return (st.tickers[sym] = { shadows: sh, sim: newTrader(alloc, st.cfg), live: newTrader(alloc, st.cfg),
@@ -334,7 +358,7 @@
   }
 
   function review(st, sym, T, date) {
-    const B = brainParams(st), scores = {}, allowed = B.strategies || Object.keys(STRATEGIES);
+    const B = brainParams(st), scores = {}, allowed = allowedStrategies(B);
     for (const k in T.shadows) if (allowed.includes(k)) scores[k] = sharpe(T.shadows[k].eq, B.scoreWindow);
     T.scores = scores;
     let best = null, bestS = -Infinity;
@@ -428,6 +452,7 @@
   function stepDays(ctx, n) {
     const { st, data, nl, prep, dates } = ctx;
     const cap = st.cfg.closedCap || 1500, B = brainParams(st);
+    ctx.allowed = allowedStrategies(B);
     const end = Math.min(dates.length, ctx.pos + n);
     for (; ctx.pos < end; ctx.pos++) {
       const d = dates[ctx.pos];
@@ -441,7 +466,7 @@
         for (const k in T.shadows) { tg[k] = resolve(T.lt[k] || 0, P.targets[k], i); T.lt[k] = tg[k]; }
         for (const k in T.shadows) {
           const cl = onBar(T.shadows[k], d, R.o[i], R.h[i], R.l[i], R.c[i], tg[k], a, true, feat, k);
-          if (cl) { st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
+          if (cl && ctx.allowed.includes(k)) { st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
             if (st.learning.closed.length > cap) st.learning.closed.shift(); }
         }
         if (++T.sinceReview >= B.reviewEvery) { T.sinceReview = 0; review(st, sym, T, d); }
@@ -542,7 +567,7 @@
       for (const k in T.shadows) {
         const tg = resolve(T.lt[k] || 0, P.targets[k], i); T.lt[k] = tg;
         const cl = onBar(T.shadows[k], d, R.o[i], R.h[i], R.l[i], R.c[i], tg, a, true, feat, k);
-        if (cl) st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
+        if (cl && allowedStrategies(B).includes(k)) st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
       }
       if (++T.sinceReview >= B.reviewEvery) { T.sinceReview = 0; review(st, sym, T, d); }
       T.lastClose = R.c[i];
@@ -561,6 +586,9 @@
     scoreWindow: [126, 250],
     useRules: [true, false],
     ruleMargin: [0.5, 1, 2],
+    quick: [false, true],
+    tpAtr: [0, 1, 1.5, 2, 3],
+    maxDays: [0, 5, 10, 20],
   };
   const PARAM_LABELS = {
     stopAtr: (v) => (v ? `stop-loss ${v}× ATR` : 'no stop-loss'),
@@ -569,15 +597,23 @@
     scoreWindow: (v) => `judge strategies on the last ${v === 250 ? 'year' : '6 months'}`,
     useRules: (v) => (v ? 'use learned rules' : 'ignore learned rules'),
     ruleMargin: (v) => `rule strictness ${v === 0.5 ? 'high' : v === 1 ? 'normal' : 'low'}`,
+    quick: (v) => (v ? 'quick trading (short swings)' : 'normal trading (ride trends)'),
+    tpAtr: (v) => (v ? `take profit at +${v}× ATR` : 'no profit target'),
+    maxDays: (v) => (v ? `sell after ${v} sessions at most` : 'no time limit'),
     strategies: (v) => {
-      if (!v || v.length >= ALL.length) return 'use all strategies';
-      const off = ALL.filter((k) => !v.includes(k));
+      if (!v) return 'use all strategies of that style';
+      const pool = STRATEGIES[v[0]].quick ? QUICK : NORMAL;
+      if (v.length >= pool.length) return 'use all strategies of that style';
+      const off = pool.filter((k) => !v.includes(k));
       return off.length <= v.length ? `don't use ${off.map((k) => STRATEGIES[k].label).join(', ')}` : `only use ${v.map((k) => STRATEGIES[k].label).join(', ')}`;
     },
   };
   const normParams = (p) => {
     const n = { ...BRAIN_DEFAULTS, stopAtr: 3, ...p };
-    n.strategies = n.strategies && n.strategies.length < ALL.length ? ALL.filter((k) => n.strategies.includes(k)) : null;
+    n.quick = !!n.quick;
+    const pool = n.quick ? QUICK : NORMAL;
+    n.strategies = n.strategies ? pool.filter((k) => n.strategies.includes(k)) : null;
+    if (n.strategies && (n.strategies.length < 2 || n.strategies.length >= pool.length)) n.strategies = null;
     return n;
   };
   const paramKey = (p) => JSON.stringify(normParams(p));
@@ -588,10 +624,10 @@
   function neighbours(p) {
     const n = normParams(p), out = [];
     for (const k in SPACE) for (const v of SPACE[k]) if (v !== n[k]) out.push({ ...n, [k]: v });
-    const on = n.strategies || ALL;
-    for (const k of ALL) {
+    const pool = n.quick ? QUICK : NORMAL, on = (n.strategies || pool).filter((k) => pool.includes(k));
+    for (const k of pool) {
       const next = on.includes(k) ? on.filter((x) => x !== k) : [...on, k];
-      if (next.length >= 2) out.push({ ...n, strategies: next });
+      if (next.length >= 2) out.push({ ...n, strategies: next.length === pool.length ? null : next });
     }
     return out.map(normParams);
   }
@@ -616,6 +652,60 @@
     };
     return o;
   }
+  // Evolution: a population of very different settings; the fittest survive, mix and mutate.
+  const lcg = (seed) => { let r = seed >>> 0; return () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296); };
+  const pickOf = (arr, rand) => arr[Math.floor(rand() * arr.length)];
+  function randomParams(rand) {
+    const p = {};
+    for (const k in SPACE) p[k] = pickOf(SPACE[k], rand);
+    const pool = p.quick ? QUICK : NORMAL;
+    let on = pool.filter(() => rand() < 0.7);
+    while (on.length < 2) on = [...new Set([...on, pickOf(pool, rand)])];
+    p.strategies = on;
+    return normParams(p);
+  }
+  function crossover(a, b, rand) {
+    const A = normParams(a), B = normParams(b), c = {};
+    for (const k in SPACE) c[k] = rand() < 0.5 ? A[k] : B[k];
+    const pool = c.quick ? QUICK : NORMAL, sa = A.strategies || pool, sb = B.strategies || pool;
+    let on = pool.filter((k) => (rand() < 0.5 ? sa : sb).includes(k));
+    while (on.length < 2) on = [...new Set([...on, pickOf(pool, rand)])];
+    c.strategies = on;
+    return normParams(c);
+  }
+  function makeEvolver(start, { maxRounds = 32, popSize = 8, seed = 11 } = {}) {
+    const rand = lcg(seed), generations = Math.max(2, Math.round(maxRounds / popSize));
+    const o = { best: normParams(start), bestScore: -Infinity, tried: new Map(), rounds: 0, stale: 0, done: false, history: [],
+      maxRounds: generations * popSize, gen: 1, generations, queue: [] };
+    const seen = new Set();
+    const push = (p) => { const k = paramKey(p); if (!seen.has(k) && !o.tried.has(k)) { seen.add(k); o.queue.push(p); } };
+    push(o.best);
+    for (let i = 0; o.queue.length < popSize && i < 200; i++) push(randomParams(rand));
+    o.next = () => {
+      if (o.done) return null;
+      if (!o.queue.length) {
+        if (o.gen >= generations) { o.done = true; return null; }
+        o.gen++;
+        const ranked = [...o.tried.entries()].sort((x, y) => y[1] - x[1]).slice(0, Math.max(3, popSize / 2)).map(([k]) => JSON.parse(k));
+        for (let i = 0; o.queue.length < popSize && i < 400; i++) {
+          let child = crossover(pickOf(ranked, rand), pickOf(ranked, rand), rand);
+          if (rand() < 0.6) child = pickOf(neighbours(child), rand);
+          push(child);
+        }
+        if (!o.queue.length) { o.done = true; return null; }
+      }
+      return o.queue.shift();
+    };
+    o.report = (p, score, extra) => {
+      o.rounds++; o.tried.set(paramKey(p), score);
+      const better = score > o.bestScore + 1e-9;
+      if (better) { o.best = normParams(p); o.bestScore = score; o.stale = 0; } else o.stale++;
+      o.history.push({ round: o.rounds, gen: o.gen, params: normParams(p), score, better, ...(extra || {}) });
+      return better;
+    };
+    return o;
+  }
+
   /** Run one training account with given settings over [start, end]; price data and indicators are reused. */
   function evaluate(cfg, params, data, nifty, start, end, lessons) {
     const n = normParams(params);
@@ -635,9 +725,12 @@
   /** Apply tuned settings to the live account (new entries use the new stop-loss; open stops stay as they are). */
   function applyParams(st, params, today, nowIso) {
     const n = normParams(params), before = brainParams(st);
-    st.cfg.brain = { reviewEvery: n.reviewEvery, minScore: n.minScore, scoreWindow: n.scoreWindow, useRules: n.useRules, ruleMargin: n.ruleMargin, strategies: n.strategies };
+    st.cfg.brain = { reviewEvery: n.reviewEvery, minScore: n.minScore, scoreWindow: n.scoreWindow, useRules: n.useRules, ruleMargin: n.ruleMargin, strategies: n.strategies,
+      quick: n.quick, tpAtr: n.tpAtr, maxDays: n.maxDays };
     st.cfg.stopAtr = n.stopAtr;
-    Object.values(st.tickers).forEach((T) => { [T.live, T.sim, ...Object.values(T.shadows)].forEach((t) => { t.stopAtr = n.stopAtr; }); });
+    Object.values(st.tickers).forEach((T) => { [T.live, T.sim, ...Object.values(T.shadows)].forEach((t) => { t.stopAtr = n.stopAtr; t.tpAtr = n.tpAtr; t.maxDays = n.maxDays; }); });
+    // switching style: the brain must pick a strategy of the new style at the next review
+    if (before.quick !== n.quick) Object.values(st.tickers).forEach((T) => { T.active = null; T.sinceReview = n.reviewEvery; });
     const ch = describeParams(n, before);
     logEvent(st, today, ch.length ? `New brain settings: ${ch.join('; ')}` : 'Brain settings unchanged', 'learn', nowIso);
     return ch;
@@ -648,7 +741,8 @@
     const tags = [];
     if (tr.f) for (const k in FEATURES) if (tr.f[k]) tags.push(FEATURES[k].lesson);
     if (tr.r === 'stop') tags.push('Stopped out: the move went against the entry by more than the ATR stop');
-    if (tr.bars <= 10 && tr.r !== 'stop') tags.push('Whipsaw: the signal reversed within 2 weeks');
+    if (tr.r === 'time') tags.push('Time ran out: the move did not happen within the time limit');
+    if (tr.bars <= 10 && tr.r === 'signal') tags.push('Whipsaw: the signal reversed within 2 weeks');
     if (!tags.length) tags.push('No obvious mistake – normal losing trade (every strategy has them)');
     return tags;
   }
@@ -658,13 +752,14 @@
     const w = c.filter((t) => t.pnl > 0), l = c.filter((t) => t.pnl <= 0);
     const avg = (a) => (a.length ? a.reduce((s, t) => s + t.ret, 0) / a.length : NaN);
     return { n: c.length, winRate: c.length ? w.length / c.length : NaN, avgWin: avg(w), avgLoss: avg(l),
-      pnl: c.reduce((s, t) => s + t.pnl, 0) };
+      pnl: c.reduce((s, t) => s + t.pnl, 0), avgDays: c.length ? c.reduce((s, t) => s + (t.bars || 0), 0) / c.length : NaN,
+      targets: c.filter((t) => t.r === 'target').length };
   }
 
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
-    BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, evaluate, periodStats, applyParams, paramKey, normParams,
-    migrate, pauseOn, isPaused, setPause, addTicker, removeTicker,
+    BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
+    migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach,
     adjustCapital, netCapital, cashTotal };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
