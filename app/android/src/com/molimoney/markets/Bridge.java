@@ -2,9 +2,13 @@ package com.molimoney.markets;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 
@@ -13,6 +17,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 /** Methods callable from JavaScript as window.Android.* */
@@ -59,6 +64,40 @@ public class Bridge implements Runnable {
         if (!tmp.renameTo(f)) {
             f.delete();
             tmp.renameTo(f);
+        }
+    }
+
+    /**
+     * Save an exported file where the user can find it: Downloads/Moli on Android 10+,
+     * the app's own Download folder on older phones. Returns the location, or "" on failure.
+     */
+    @JavascriptInterface
+    public String download(String name, String mime, String content) {
+        byte[] data = content.getBytes(StandardCharsets.UTF_8);
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.Downloads.DISPLAY_NAME, name);
+                v.put(MediaStore.Downloads.MIME_TYPE, mime);
+                v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Moli");
+                Uri uri = activity.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) return "";
+                try (OutputStream out = activity.getContentResolver().openOutputStream(uri)) {
+                    if (out == null) return "";
+                    out.write(data);
+                }
+                return "Downloads/Moli/" + name;
+            }
+            File dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (dir == null) return "";
+            dir.mkdirs();
+            File f = new File(dir, name);
+            try (FileOutputStream out = new FileOutputStream(f)) {
+                out.write(data);
+            }
+            return f.getAbsolutePath();
+        } catch (Exception e) {
+            return "";
         }
     }
 

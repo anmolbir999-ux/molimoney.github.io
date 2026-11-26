@@ -221,20 +221,82 @@
   function newState(cfg, today) {
     const paperStart = today;
     const ws = new Date(today + 'T00:00:00Z'); ws.setUTCFullYear(ws.getUTCFullYear() - cfg.warmYears);
-    return { v: 1, cfg, created: today, paperStart, warmStart: ws.toISOString().slice(0, 10), lastDate: null,
-      lastFetch: 0, tickers: {}, learning: { closed: [], rules: {}, events: [] }, equity: [], sim: [] };
+    return migrate({ v: 2, cfg, created: today, paperStart, warmStart: ws.toISOString().slice(0, 10), lastDate: null,
+      lastFetch: 0, tickers: {}, learning: { closed: [], rules: {}, events: [] }, equity: [], sim: [] });
+  }
+
+  /** Bring older saved states up to date (adds fields introduced later). */
+  function migrate(st) {
+    if (!st) return st;
+    if (st.slice == null) st.slice = st.cfg.capital / st.cfg.tickers.length;
+    if (st.invested == null) st.invested = st.slice * st.cfg.tickers.length; // total paper money put in
+    if (st.withdrawn == null) st.withdrawn = 0;                             // cash taken out by removing stocks
+    st.pauses = st.pauses || [];
+    st.runs = st.runs || [];
+    st.archive = st.archive || [];
+    st.equity.forEach((r) => { if (r.length < 4) r[3] = st.invested - st.withdrawn; });
+    st.v = 2;
+    return st;
+  }
+
+  // ------------------------------------------------------------------ pause / stop
+  /** Pause mode on date d: null, 'pause' (no new buys) or 'stop' (sell everything, no buys). */
+  function pauseOn(st, d) {
+    for (const p of st.pauses) if (p.from <= d && (!p.to || d < p.to)) return p.mode;
+    return null;
+  }
+  const isPaused = (st) => { const p = st.pauses[st.pauses.length - 1]; return p && !p.to ? p.mode : null; };
+  function setPause(st, mode, today, nowIso) {
+    const open = st.pauses[st.pauses.length - 1];
+    if (open && !open.to) { open.to = today; open.endedAt = nowIso; if (open.from >= open.to) st.pauses.pop(); }
+    if (mode) {
+      st.pauses.push({ mode, from: today, to: null, at: nowIso });
+      // cancel buy orders that were queued for the next open
+      Object.values(st.tickers).forEach((T) => { if (T.live.pending === 'BUY') T.live.pending = ''; });
+    }
+    logEvent(st, today, mode === 'pause' ? 'You paused trading: no new buys (stops and exits still active)'
+      : mode === 'stop' ? 'You stopped trading: all positions sell at the next open, no new buys' : 'You resumed trading', 'user', nowIso);
+  }
+
+  // ------------------------------------------------------------------ add / remove stocks
+  function addTicker(st, sym, today, nowIso) {
+    if (st.cfg.tickers.includes(sym)) return false;
+    st.cfg.tickers.push(sym);
+    st.invested += st.slice;
+    logEvent(st, today, `You added ${sym.replace('.NS', '')} with ₹${Math.round(st.slice).toLocaleString('en-IN')} paper capital`, 'user', nowIso);
+    return true;
+  }
+  /** Remove now if flat; otherwise sell at the next open and remove once sold. */
+  function removeTicker(st, sym, today, nowIso) {
+    const T = st.tickers[sym];
+    if (!T || (T.live.qty === 0 && T.live.pending !== 'SELL')) return finishRemove(st, sym, today, nowIso);
+    T.removing = true;
+    if (T.live.pending === 'BUY') T.live.pending = '';
+    logEvent(st, today, `You removed ${sym.replace('.NS', '')}: it will be sold at the next open`, 'user', nowIso);
+    return false;
+  }
+  function finishRemove(st, sym, today, nowIso) {
+    const T = st.tickers[sym];
+    st.cfg.tickers = st.cfg.tickers.filter((t) => t !== sym);
+    if (T) {
+      st.withdrawn += T.live.cash;
+      st.archive.push(...T.live.trades.map((t) => ({ ...t, sym })));
+      delete st.tickers[sym];
+    } else st.invested -= st.slice;
+    logEvent(st, today, `${sym.replace('.NS', '')} removed; its cash was withdrawn from the paper account`, 'user', nowIso);
+    return true;
   }
 
   function ensureTicker(st, sym) {
     if (st.tickers[sym]) return st.tickers[sym];
-    const alloc = st.cfg.capital / st.cfg.tickers.length, sh = {};
+    const alloc = st.slice, sh = {};
     for (const k in STRATEGIES) sh[k] = newTrader(alloc, st.cfg);
     return (st.tickers[sym] = { shadows: sh, sim: newTrader(alloc, st.cfg), live: newTrader(alloc, st.cfg),
       active: null, scores: {}, sinceReview: REVIEW_EVERY, lastClose: null, lt: {}, spark: { d: [], c: [] } });
   }
 
-  function logEvent(st, date, text, kind) {
-    st.learning.events.push({ date, text, kind });
+  function logEvent(st, date, text, kind, at) {
+    st.learning.events.push({ date, text, kind, at: at || st._now || new Date().toISOString() });
     if (st.learning.events.length > 300) st.learning.events.shift();
   }
 
@@ -304,13 +366,17 @@
    * data: { [sym]: parsed }, nifty: parsed. Returns summary of what happened.
    */
   function run(st, data, nifty, nowMs) {
+    migrate(st);
+    st._now = new Date(nowMs || Date.now()).toISOString();
     const nl = niftyLookup(nifty.bars);
     const prep = {};
     for (const sym of st.cfg.tickers) {
       if (!data[sym] || !data[sym].bars.d.length) continue;
+      const isNew = !st.tickers[sym];
       ensureTicker(st, sym);
-      applySplits(st, sym, data[sym].splits);
+      if (!isNew) applySplits(st, sym, data[sym].splits);
       prep[sym] = prepare(data[sym].bars, nl);
+      if (isNew && st.lastDate) preRoll(st, sym, prep[sym], data[sym]);
     }
     const dates = [...new Set(Object.values(prep).flatMap((p) => p.raw.d))].sort()
       .filter((d) => st.lastDate === null || d > st.lastDate);
@@ -331,13 +397,14 @@
             if (st.learning.closed.length > 1500) st.learning.closed.shift(); }
         }
         if (++T.sinceReview >= REVIEW_EVERY) { T.sinceReview = 0; review(st, sym, T, d); }
-        const tgt = T.active ? tg[T.active] : 0;
-        const blk = blocked(st, feat), allow = blk.length === 0;
+        const pm = d >= st.paperStart ? pauseOn(st, d) : null;
+        const tgt = T.removing || pm === 'stop' ? 0 : T.active ? tg[T.active] : 0;
+        const blk = blocked(st, feat), allow = blk.length === 0 && !pm && !T.removing;
         if (d >= st.warmStart && d < st.paperStart) onBar(T.sim, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, T.active);
         if (d >= st.paperStart) {
           const had = T.live.pending;
           onBar(T.live, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, T.active);
-          if (!allow && tgt === 1 && T.live.qty === 0 && T.live.armed && !had)
+          if (blk.length && !pm && tgt === 1 && T.live.qty === 0 && T.live.armed && !had)
             T.blockedToday = { d, rules: blk };
         }
         T.lastClose = R.c[i]; T.lastDate = d;
@@ -345,18 +412,42 @@
         if (T.spark.d.length > 260) { T.spark.d.shift(); T.spark.c.shift(); }
       }
       updateRules(st, d);
+      for (const sym in st.tickers) {
+        const T = st.tickers[sym];
+        if (T.removing && T.live.qty === 0 && !T.live.pending) { finishRemove(st, sym, d); delete prep[sym]; }
+      }
       const n = nl(d), tot = (k) => Object.values(st.tickers).reduce((s, T) => s + equity(T[k], T.lastClose || 0), 0);
       if (d >= st.warmStart && d < st.paperStart) st.sim.push([d, Math.round(tot('sim')), n ? n.c : null]);
-      if (d >= st.paperStart) st.equity.push([d, Math.round(tot('live')), n ? n.c : null]);
+      if (d >= st.paperStart) st.equity.push([d, Math.round(tot('live')), n ? n.c : null, Math.round(st.invested - st.withdrawn)]);
       st.lastDate = d;
     }
     st.lastFetch = nowMs || Date.now();
+    delete st._now;
     return { days: dates.length, newTrades: liveTradeCount(st) - before.trades,
       newEvents: st.learning.events.slice(before.events) };
   }
 
   function liveTradeCount(st) { // entries + exits so far
     return Object.values(st.tickers).reduce((s, T) => s + T.live.trades.length + T.live.trades.filter((t) => t.x).length, 0);
+  }
+
+  /** A stock added later: let its shadow strategies and the brain catch up on past data first. */
+  function preRoll(st, sym, P, D) {
+    const T = st.tickers[sym], R = P.raw;
+    for (let i = P.ready; i < R.d.length && R.d[i] <= st.lastDate; i++) {
+      const d = R.d[i], feat = P.feats[i], a = P.atr[i], dv = D.divs[d];
+      if (dv) Object.values(T.shadows).forEach((t) => { if (t.qty > 0) t.cash += t.qty * dv; });
+      for (const k in T.shadows) {
+        const tg = resolve(T.lt[k] || 0, P.targets[k], i); T.lt[k] = tg;
+        const cl = onBar(T.shadows[k], d, R.o[i], R.h[i], R.l[i], R.c[i], tg, a, true, feat, k);
+        if (cl) st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
+      }
+      if (++T.sinceReview >= REVIEW_EVERY) { T.sinceReview = 0; review(st, sym, T, d); }
+      T.lastClose = R.c[i];
+      T.spark.d.push(d); T.spark.c.push(R.c[i]);
+      if (T.spark.d.length > 260) { T.spark.d.shift(); T.spark.c.shift(); }
+    }
+    review(st, sym, T, st.lastDate); T.sinceReview = 0;
   }
 
   /** Why a closed losing trade went wrong, in plain words. */
@@ -378,6 +469,7 @@
   }
 
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
-    diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY };
+    diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
+    migrate, pauseOn, isPaused, setPause, addTicker, removeTicker };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(this);

@@ -3,24 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Paper Trader</title>
+<meta name="theme-color" content="#0f172a">
+<title>Moli Paper Trader</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header class="top">
-  <div>
-    <div class="brand">Paper Trader</div>
-    <div class="status" id="status">–</div>
+  <div class="brandrow">
+    <div class="logo">m</div>
+    <div>
+      <div class="brand">moli <span>paper trader</span></div>
+      <div class="status" id="status">–</div>
+    </div>
   </div>
   <button class="btn" id="updateBtn">Update</button>
 </header>
-<nav class="tabs" id="tabs">
-  <a data-tab="portfolio" class="on">Portfolio</a>
-  <a data-tab="brain">Brain</a>
-  <a data-tab="journal">Journal</a>
-  <a data-tab="settings">Settings</a>
-</nav>
+<div class="progress" id="progress" hidden><div class="bar" id="bar"></div><div class="eta" id="eta"></div></div>
 <main id="view"></main>
+<nav class="bottom" id="tabs">
+  <a data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</a>
+  <a data-tab="stocks"><svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 4 8-9"/><path d="M15 7h5v5"/></svg>Stocks</a>
+  <a data-tab="brain"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M16 16l3 3M5 19l3-3M16 8l3-3"/></svg>Brain</a>
+  <a data-tab="journal"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>Journal</a>
+  <a data-tab="more"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>More</a>
+</nav>
 <div class="toast" id="toast"></div>
 <script src="engine.js"></script>
 <script src="app.js"></script>
