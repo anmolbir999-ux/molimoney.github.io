@@ -990,6 +990,87 @@
     return { slopePct: (Math.exp(slope) - 1) * 100, r2, end: path[ahead], lo: lo[ahead], hi: hi[ahead], path, loPath: lo, hiPath: hi, look, ahead, volPct: sdD * 100 };
   }
 
+  // ------------------------------------------------------------------ trend forecast (up / down / sideways)
+  // Trend today: the 50-day average's direction over the last 20 sessions + where the price sits.
+  // Forecast: a small logistic model of "higher in 20 sessions?" trained on the stock's own past,
+  // scored on later stretches it never saw (walk-forward) and compared with "always guess up".
+  const TF_H = 20;
+  const TF_FEATS = ['5-day move', '20-day move', '60-day move', 'vs 20-day avg', 'vs 50-day avg', 'vs 200-day avg', '50-day avg slope', 'RSI', 'MACD', 'volatility', 'Nifty vs 200-day', 'Nifty 20-day move'];
+  function trendStates(c, s50, s200) {
+    const n = c.length, st = new Array(n).fill(null);
+    for (let i = 70; i < n; i++) {
+      if (isn(s50[i]) || isn(s50[i - 20])) continue;
+      const sl = s50[i] / s50[i - 20] - 1;
+      st[i] = sl > 0.01 && c[i] > s50[i] ? 'up' : sl < -0.01 && c[i] < s50[i] ? 'down' : 'side';
+    }
+    return st;
+  }
+  function tfFeatures(b, nifty) {
+    const c = b.c, n = c.length, s20 = sma(c, 20), s50 = sma(c, 50), s200 = sma(c, 200), r = rsi(c, 14), m = macd(c);
+    const lr = c.map((x, i) => (i ? Math.log(x / c[i - 1]) : 0)), vol = rollStd(lr, 20);
+    let nf = null;
+    if (nifty && nifty.d && nifty.d.length > 260) {
+      const nc = nifty.ac || nifty.c, ns = sma(nc, 200), idx = new Map(nifty.d.map((d, i) => [d, i]));
+      nf = b.d.map((d) => { let j = idx.get(d); return j == null || isn(ns[j]) || j < 20 ? null : [nc[j] / ns[j] - 1, nc[j] / nc[j - 20] - 1]; });
+    }
+    const X = new Array(n).fill(null);
+    for (let i = 200; i < n; i++) {
+      if ([s200[i], s50[i - 20], r[i], m.signal[i], vol[i]].some(isn)) continue;
+      const x = [c[i] / c[i - 5] - 1, c[i] / c[i - 20] - 1, c[i] / c[i - 60] - 1, c[i] / s20[i] - 1, c[i] / s50[i] - 1, c[i] / s200[i] - 1, s50[i] / s50[i - 20] - 1, (r[i] - 50) / 50, (m.line[i] - m.signal[i]) / c[i], vol[i]];
+      if (nf) { if (!nf[i]) continue; x.push(nf[i][0], nf[i][1]); }
+      X[i] = x;
+    }
+    return { X, s50, s200, useNifty: !!nf };
+  }
+  function logitFit(X, y, iters = 250, lr = 0.3, l2 = 1) {
+    const k = X[0].length, mu = new Array(k).fill(0), sd = new Array(k).fill(0);
+    X.forEach((x) => x.forEach((v, j) => { mu[j] += v / X.length; }));
+    X.forEach((x) => x.forEach((v, j) => { sd[j] += (v - mu[j]) ** 2 / X.length; }));
+    for (let j = 0; j < k; j++) sd[j] = Math.sqrt(sd[j]) || 1;
+    const Z = X.map((x) => x.map((v, j) => Math.max(-4, Math.min(4, (v - mu[j]) / sd[j]))));
+    const w = new Array(k).fill(0); let b0 = 0;
+    for (let t = 0; t < iters; t++) {
+      const g = new Array(k).fill(0); let gb = 0;
+      for (let i = 0; i < Z.length; i++) { let z = b0; for (let j = 0; j < k; j++) z += w[j] * Z[i][j]; const e = 1 / (1 + Math.exp(-z)) - y[i]; gb += e; for (let j = 0; j < k; j++) g[j] += e * Z[i][j]; }
+      b0 -= (lr * gb) / Z.length; for (let j = 0; j < k; j++) w[j] -= lr * (g[j] / Z.length + l2 * w[j]);
+    }
+    const p = (x) => { let z = b0; for (let j = 0; j < k; j++) z += w[j] * Math.max(-4, Math.min(4, (x[j] - mu[j]) / sd[j])); return 1 / (1 + Math.exp(-z)); };
+    return { p, w, b0 };
+  }
+  /** Trend now + forecast for the next 20 sessions, with an honest out-of-sample score. */
+  function trendForecast(b, nifty) {
+    const c = b.c, n = c.length, { X, s50, s200, useNifty } = tfFeatures(b, nifty), states = trendStates(c, s50, s200);
+    const rows = []; for (let i = 0; i + TF_H < n; i++) if (X[i]) rows.push(i);
+    if (rows.length < 400 || !X[n - 1] || !states[n - 1]) return null;
+    const y = (i) => (c[i + TF_H] > c[i] ? 1 : 0);
+    // walk-forward: 4 test blocks over the last 40%; each model trains only on bars ending ≥20 sessions before the block
+    const start = Math.floor(rows.length * 0.6), blk = Math.ceil((rows.length - start) / 4);
+    let hit = 0, tot = 0, base = 0, conf = 0, confHit = 0, brier = 0;
+    for (let a = start; a < rows.length; a += blk) {
+      const tr = rows.slice(0, Math.max(0, a - TF_H)), te = rows.slice(a, a + blk);
+      if (tr.length < 250) continue;
+      const M = logitFit(tr.map((i) => X[i]), tr.map(y)), upRate = tr.reduce((s, i) => s + y(i), 0) / tr.length;
+      te.forEach((i) => { const p = M.p(X[i]), yy = y(i); tot++; if ((p >= 0.5) === (yy === 1)) hit++; if ((upRate >= 0.5) === (yy === 1)) base++; brier += (p - yy) ** 2; if (Math.abs(p - 0.5) >= 0.08) { conf++; if ((p >= 0.5) === (yy === 1)) confHit++; } });
+    }
+    const M = logitFit(rows.map((i) => X[i]), rows.map(y)), pUp = M.p(X[n - 1]);
+    // how trends have behaved on this stock: still the same 20 sessions later?
+    const now = states[n - 1]; let age = 0; for (let i = n - 1; i >= 0 && states[i] === now; i--) age++;
+    const tr = { up: { up: 0, side: 0, down: 0, n: 0 }, side: { up: 0, side: 0, down: 0, n: 0 }, down: { up: 0, side: 0, down: 0, n: 0 } };
+    for (let i = 70; i + TF_H < n; i++) if (states[i] && states[i + TF_H]) { tr[states[i]][states[i + TF_H]]++; tr[states[i]].n++; }
+    const T = tr[now], cont = T.n ? T[now] / T.n : NaN;
+    const acc = tot ? hit / tot : NaN, baseAcc = tot ? base / tot : NaN, skill = acc - baseAcc;
+    const call = pUp >= 0.58 ? 'up' : pUp <= 0.42 ? 'down' : 'unclear';
+    const trust = !tot ? 'untested' : skill >= 0.04 && acc >= 0.55 ? 'some' : skill > 0 ? 'little' : 'none';
+    const drivers = M.w.map((w, j) => ({ f: TF_FEATS[j], w })).sort((a, b2) => Math.abs(b2.w) - Math.abs(a.w)).slice(0, 3).map((d) => ({ f: d.f, dir: d.w > 0 ? 'up' : 'down' }));
+    const sl50 = (s50[n - 1] / s50[n - 21] - 1) * 100;
+    return {
+      now, age, sl50, h: TF_H, pUp, call, useNifty,
+      next: { up: T.n ? T.up / T.n : NaN, side: T.n ? T.side / T.n : NaN, down: T.n ? T.down / T.n : NaN, n: T.n }, cont,
+      test: { n: tot, acc, baseAcc, skill, conf, confAcc: conf ? confHit / conf : NaN, brier: tot ? brier / tot : NaN }, trust, drivers,
+      hist: states.slice(-80),
+    };
+  }
+
   /**
    * Predictions for one stock from its raw (split-adjusted) bars. Returns a compact object
    * stored with the account: today's signals with their historical odds, an overall lean,
@@ -1000,6 +1081,7 @@
     const b = { o: raw.o.map((x, i) => x * f[i]), h: raw.h.map((x, i) => x * f[i]), l: raw.l.map((x, i) => x * f[i]), c: raw.ac.slice(), v: raw.v, d: raw.d };
     const n = b.c.length; if (n < 260) return null;
     const { F, s20, s50 } = signalMatrix(b);
+    let trend = null; try { trend = trendForecast(b, opts.nifty); } catch (e) { trend = null; }
     const base5 = fwdStats(b.c, null, 5), base20 = fwdStats(b.c, null, 20);
     const last = n - 1, active = [], recent = [];
     for (const k in SIGNALS) {
@@ -1023,7 +1105,7 @@
       asOf: b.d[last], price: b.c[last], change: (b.c[last] / b.c[last - 1] - 1) * 100, years: Math.round((n / 252) * 10) / 10,
       base: { h5: base5, h20: base20 }, active, recent: recent.sort((x, y) => x.ago - y.ago).slice(0, 4),
       outlook: { p5: p, edge, lean, strength, n: nTot },
-      levels: srLevels(b), proj: projection(b.c, 60, 10),
+      levels: srLevels(b), proj: projection(b.c, 60, 10), trend,
       chart: { d: b.d.slice(n - K), o: sl(b.o), h: sl(b.h), l: sl(b.l), c: sl(b.c), s20: sl(s20), s50: sl(s50), marks },
     };
   }
@@ -1051,7 +1133,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
-    predict, SIGNALS, signalMatrix,
+    predict, SIGNALS, signalMatrix, trendForecast, trendStates, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };
