@@ -81,19 +81,36 @@
   }
 
   // ---------------------------------------------------------------- charts
-  function lineChart(series, opts = {}) {
-    const W = 340, H = 170, P = 6;
-    const all = series.flatMap((s) => s.v.filter((x) => x != null && !Number.isNaN(x)));
-    if (all.length < 2) return '';
-    const min = Math.min(...all), max = Math.max(...all), n = Math.max(...series.map((s) => s.v.length));
-    const X = (i) => P + (i / Math.max(n - 1, 1)) * (W - 2 * P), Y = (v) => H - P - ((v - min) / (max - min || 1)) * (H - 2 * P);
-    const paths = series.map((s) => {
-      let d = ''; s.v.forEach((v, i) => { if (v == null || Number.isNaN(v)) return; d += (d ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); });
-      return `<path d="${d}" fill="none" stroke="${s.c}" stroke-width="${s.w || 1.6}" ${s.dash ? 'stroke-dasharray="4 3"' : ''} stroke-linejoin="round"/>`;
-    }).join('');
-    const marks = (opts.marks || []).map((m) => `<circle cx="${X(m.i).toFixed(1)}" cy="${Y(m.v).toFixed(1)}" r="3.5" fill="${m.c}"/>`).join('');
-    return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${paths}${marks}</svg>` +
-      `<div class="legend">${series.map((s) => `<span><i style="background:${s.c}"></i>${esc(s.name)}</span>`).join('')}</div>`;
+  /** Minimal profit/loss chart: area shaded green above the starting value, red below. */
+  let gid = 0;
+  function pnlChart(v, bench) {
+    const W = 340, H = 180, P = 4, pts = v.filter((x) => x != null);
+    if (pts.length < 2) return '';
+    const b = bench ? bench.filter((x) => x != null) : [];
+    const lo = Math.min(100, ...pts, ...b), hi = Math.max(100, ...pts, ...b), n = v.length;
+    const X = (i) => P + (i / (n - 1)) * (W - 2 * P), Y = (y) => P + (1 - (y - lo) / (hi - lo || 1)) * (H - 2 * P);
+    const y0 = Y(100), up = css('--up'), dn = css('--down'), id = 'g' + ++gid;
+    const line = v.map((y, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(y).toFixed(1)}`).join('');
+    const area = `${line}L${X(n - 1).toFixed(1)},${y0.toFixed(1)}L${X(0).toFixed(1)},${y0.toFixed(1)}Z`;
+    let bl = '';
+    if (bench) { let d = ''; bench.forEach((y, i) => { if (y != null) d += `${d ? 'L' : 'M'}${X(i).toFixed(1)},${Y(y).toFixed(1)}`; });
+      bl = `<path d="${d}" fill="none" stroke="${css('--mut')}" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>`; }
+    const last = v[n - 1], col = last >= 100 ? up : dn;
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="${id}u" x1="0" y1="${P}" x2="0" y2="${y0}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${up}" stop-opacity=".45"/><stop offset="1" stop-color="${up}" stop-opacity="0"/></linearGradient>
+        <linearGradient id="${id}d" x1="0" y1="${y0}" x2="0" y2="${H - P}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${dn}" stop-opacity="0"/><stop offset="1" stop-color="${dn}" stop-opacity=".45"/></linearGradient>
+        <clipPath id="${id}a"><rect x="0" y="0" width="${W}" height="${y0}"/></clipPath>
+        <clipPath id="${id}b"><rect x="0" y="${y0}" width="${W}" height="${H - y0}"/></clipPath>
+      </defs>
+      <path d="${area}" fill="url(#${id}u)" clip-path="url(#${id}a)"/>
+      <path d="${area}" fill="url(#${id}d)" clip-path="url(#${id}b)"/>
+      <line x1="0" x2="${W}" y1="${y0}" y2="${y0}" stroke="${css('--line')}" stroke-width="1"/>
+      ${bl}
+      <path d="${line}" fill="none" stroke="${up}" stroke-width="1.8" stroke-linejoin="round" clip-path="url(#${id}a)"/>
+      <path d="${line}" fill="none" stroke="${dn}" stroke-width="1.8" stroke-linejoin="round" clip-path="url(#${id}b)"/>
+      <circle cx="${X(n - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="3.5" fill="${col}"/>
+    </svg>` + (bench ? `<div class="legend"><span><i style="background:${col}"></i>Profit / loss</span><span><i style="background:${css('--mut')}"></i>Nifty 50</span></div>` : '');
   }
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   function curve(rows, base) {
@@ -113,12 +130,12 @@
     let h = `<div class="big">${inr(eqNow)}</div>
       <p class="sub"><span class="${cls(eqNow - cap)}">${eqNow >= cap ? '+' : ''}${inr(eqNow - cap).replace('₹-', '−₹')} (${pct((eqNow / cap - 1) * 100, 2)})</span>
       since ${fdate(st.paperStart)}${nRet != null ? ` · Nifty ${pct(nRet, 2)}` : ''}</p>`;
-    if (live.length >= 3) {
-      h += lineChart([{ name: 'Your paper account', v: c.eq, c: css('--fg') }, { name: 'Nifty 50', v: c.nf, c: css('--mut'), dash: 1 }]);
+    if (live.length >= 2) {
+      h += pnlChart(c.eq);
     } else if (st.sim.length > 20) {
       const s = curve(st.sim), r = s.eq[s.eq.length - 1] - 100, nr = s.nf[s.nf.length - 1] - 100;
       h += `<div class="sec">Brain's practice run · ${fdate(st.sim[0][0])} – ${fdate(st.sim[st.sim.length - 1][0])}</div>`;
-      h += lineChart([{ name: 'Brain (simulated)', v: s.eq, c: css('--fg') }, { name: 'Nifty 50', v: s.nf, c: css('--mut'), dash: 1 }]);
+      h += pnlChart(s.eq);
       h += `<p class="sub">Simulated return ${pct(r)} (max drawdown ${pct(maxDD(s.eq))}) vs Nifty ${pct(nr)} (${pct(maxDD(s.nf.filter((x) => x)))}). Real paper trading started ${fdate(st.paperStart)}.</p>`;
     }
     const pos = Object.entries(T).filter(([, t]) => t.live.qty > 0);
