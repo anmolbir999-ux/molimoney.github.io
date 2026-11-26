@@ -1007,7 +1007,8 @@
 
   // ---------------------------------------------------------------- training on the past
   const MIN_TRAIN = '2008-01-01';
-  let train = { phase: 'setup', preset: '5y', from: '', to: '', brain: 'fresh', speed: 4, mode: 'watch', rounds: 30, autoApply: false, route: 'climb', style: 'account' };
+  let train = { phase: 'setup', preset: '5y', from: '', to: '', brain: 'fresh', speed: 4, mode: 'watch', rounds: 30, autoApply: false, route: 'climb', style: 'account', cmpRot: true };
+  let rotTrainCache = null; // { p1, p2, data } – the ~80-stock universe, reused by later training runs that fit inside it
   const yearsAgo = (n) => { const d = new Date(todayIST() + 'T00:00:00Z'); d.setUTCFullYear(d.getUTCFullYear() - n); return d.toISOString().slice(0, 10); };
   const PRESETS = {
     '1y': ['Last year', () => [yearsAgo(1), todayIST()]],
@@ -1072,13 +1073,17 @@
       }
       train.rotEq = null; train.rotSt = null;
       if (train.cmpRot) {
-        const U = E.ROT_UNIVERSE, rd = {};
-        for (let i = 0; i < U.length; i++) {
-          if (cancel) throw new Error('stopped');
-          progress(i, U.length, `Momentum comparison: downloading ${sym(U[i])}`);
-          if (data[U[i]]) { rd[U[i]] = data[U[i]]; continue; }
-          try { rd[U[i]] = E.parseYahoo(await httpGet(trainUrl(U[i], p1, p2))); } catch (e) { /* not listed then – skip */ }
-        }
+        const U = E.ROT_UNIVERSE, C = rotTrainCache, reuse = C && C.p1 <= p1 && C.p2 >= p2;
+        const rd = reuse ? Object.fromEntries(Object.entries(C.data).map(([k, v]) => [k, { ...v, _rot: undefined }])) : {};
+        if (!reuse) {
+          for (let i = 0; i < U.length; i++) {
+            if (cancel) throw new Error('stopped');
+            progress(i, U.length, `Momentum comparison: downloading ${sym(U[i])}`);
+            if (data[U[i]]) { rd[U[i]] = data[U[i]]; continue; }
+            try { rd[U[i]] = E.parseYahoo(await httpGet(trainUrl(U[i], p1, p2))); } catch (e) { /* not listed then – skip */ }
+          }
+          rotTrainCache = { p1, p2, data: rd };
+        } else progress(U.length, U.length, 'Momentum comparison');
         try { const R = E.newRot(capital, st.rotCfg || {}); E.rotRun(R, rd, nifty, end, start); train.rotSt = R; train.rotEq = R.equity; } catch (e) { train.rotEq = null; }
       }
       if (train.mode === 'repeat') {
@@ -1244,7 +1249,7 @@
       <p class="sub">${fd.length ? `earned on unseen data so far · current settings ${pct(comp('baseRes'))}` : `learning on ${fdate(R.start)} – ${fdate(R.folds[0].learnEnd)}…`}</p>
       ${roundsChart(R.history)}`;
     if (!done) h += `<div class="actions"><button class="btn warn sm" id="r_stop">Stop and check results</button></div>`;
-    if (done && R.fullBest) h += `<div style="margin-top:10px">${compareChart(R.fullBest.equity, R.baseFull.equity, R.folds[0].start, R.folds.map((f) => f.start).slice(1), train.beatEq)}</div>`;
+    if (done && R.fullBest) h += `<div style="margin-top:10px">${compareChart(R.fullBest.equity, R.baseFull.equity, R.folds[0].start, R.folds.map((f) => f.start).slice(1), train.beatEq, train.rotEq)}</div>`;
     h += `</div><div class="sec">Stretches</div><div class="card">` + R.folds.map((f, i) => `<div class="row"><div><b>${i + 1}. Learn to ${fdate(f.learnEnd)} → trade ${fdate(f.start)} – ${fdate(f.end)}</b><div class="m">${f.res ? esc(f.changes.join('; ') || 'current settings') : i === R.fold && !done ? 'learning…' : 'waiting'}</div></div>
       <div class="r">${f.res ? `<b class="${cls(f.res.ret - f.baseRes.ret)}">${pct(f.res.ret)}</b><div class="m">current ${pct(f.baseRes.ret)}</div>` : ''}</div></div>`).join('') + `</div>`;
     if (done) {
@@ -1296,7 +1301,9 @@
   }
   function trendLine() {
     const R = train.rep, from = R && (R.route === 'walk' ? R.folds[0].start : R.split), b = R ? beatStats(from, R.end) : null;
-    const bl = b ? `\n\nBeat the Nifty (no tuning, stay invested) made **${pct(b.ret)}** on the same unseen ${R.route === 'walk' ? 'stretches' : 'part'}, vs **${pct(R.route === 'walk' ? R.total : R.unseenBest.ret)}** for the tuned settings.` : '';
+    let bl = b ? `\n\nBeat the Nifty (no tuning, stay invested) made **${pct(b.ret)}** on the same unseen ${R.route === 'walk' ? 'stretches' : 'part'}, vs **${pct(R.route === 'walk' ? R.total : R.unseenBest.ret)}** for the tuned settings.` : '';
+    const m = R ? rotStats(from, R.end) : null;
+    if (m) bl += `\n\nMomentum rotation (Nifty 50 era stocks, after tax) made **${pct(m.ret)}** over that ${R.route === 'walk' ? 'stretch' : 'part'}.`;
     const t = trendSum(); if (!t) return bl;
     return bl + `\n\nTrend calls (same for every round – they don't depend on the settings): ${t.n} calls, right ${Math.round(t.acc * 100)}% vs ${Math.round(t.base * 100)}% for always guessing.`;
   }
@@ -1313,14 +1320,15 @@
   }
 
   /** Two training accounts + Nifty over the whole period; the part after `split` (never used for tuning) is shaded. */
-  function compareChart(eqA, eqB, split, vl = [], eqC = null) {
+  function compareChart(eqA, eqB, split, vl = [], eqC = null, eqD = null) {
     const n0 = (eqA.find((r) => r[2]) || [])[2], k = Math.ceil(eqA.length / 300) || 1, pick = (a) => a.filter((_, i) => i % k === 0 || i === a.length - 1);
-    const A = pick(eqA), B = pick(eqB.slice(0, eqA.length)), Cc = alignIdx(A, eqC);
+    const A = pick(eqA), B = pick(eqB.slice(0, eqA.length)), Cc = alignIdx(A, eqC), Dd = alignIdx(A, eqD);
     const si = A.findIndex((r) => r[0] >= split);
     return multiLine([
       { v: A.map((r) => (r[1] / A[0][1]) * 100), color: css('--clay'), name: 'Best settings found' },
       { v: B.map((r) => (r[1] / B[0][1]) * 100), color: css('--sage'), name: 'Current settings', w: 1.5 },
       ...(Cc ? [{ v: Cc, color: css('--ochre'), name: 'Beat the Nifty', w: 1.5 }] : []),
+      ...(Dd ? [{ v: Dd, color: css('--ink'), name: 'Momentum rotation', w: 1.3 }] : []),
       { v: A.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)), color: css('--slate'), name: 'Nifty 50', dash: 1, w: 1.2 },
     ], { shade: si >= 0 ? si : null, shadeLabel: 'unseen', vlines: vl.map((d) => A.findIndex((r) => r[0] >= d)).filter((i) => i > 0) });
   }
@@ -1343,11 +1351,12 @@
       ${roundsChart(o.history)}`;
     if (!done) h += `<div class="actions"><button class="btn warn sm" id="r_stop">Stop and check results</button></div>`;
     h += `</div>`;
-    if (done && R.fullBest && R.fullBase) h += `<div class="card"><div class="lbl">Best settings vs current, whole period</div>${compareChart(R.fullBest.equity, R.fullBase.equity, R.split, [], train.beatEq)}</div>`;
+    if (done && R.fullBest && R.fullBase) h += `<div class="card"><div class="lbl">Best settings vs current, whole period</div>${compareChart(R.fullBest.equity, R.fullBase.equity, R.split, [], train.beatEq, train.rotEq)}</div>`;
     if (done) {
       h += `<div class="sec">Honest test on unseen data</div><div class="card">
         <div class="row"><div><b>Training part</b><div class="m">${fdate(R.start)} – ${fdate(R.split)} · what the search optimised</div></div><div class="r"><b>${pct(R.bestTrain)}</b><div class="m">current ${pct(R.baseTrain)}</div></div></div>
         <div class="row"><div><b>Unseen part</b><div class="m">${fdate(R.split)} – ${fdate(R.end)} · never used in the search</div></div><div class="r"><b class="${cls(R.unseenBest.ret - R.unseenBase.ret)}">${pct(R.unseenBest.ret)}</b><div class="m">current ${pct(R.unseenBase.ret)}${R.unseenBest.nifty != null ? ` · Nifty ${pct(R.unseenBest.nifty)}` : ''}</div></div></div>
+        ${rotStats(R.split, R.end) ? `<div class="row"><div><b>Momentum rotation, unseen part</b><div class="m">Nifty 50 era stocks, after tax</div></div><div class="r"><b class="${cls(rotStats(R.split, R.end).ret - R.unseenBest.ret)}">${pct(rotStats(R.split, R.end).ret)}</b><div class="m">tuned ${pct(R.unseenBest.ret)}</div></div></div>` : ''}
         ${beatStats(R.split, R.end) ? `<div class="row"><div><b>Beat the Nifty, unseen part</b><div class="m">stay invested, no tuning</div></div><div class="r"><b class="${cls(beatStats(R.split, R.end).ret - R.unseenBest.ret)}">${pct(beatStats(R.split, R.end).ret)}</b><div class="m">tuned ${pct(R.unseenBest.ret)}</div></div></div>` : ''}
         <p class="sub">${!R.changes.length ? 'Nothing beat the current settings.' : R.good ? 'The new settings also did better on unseen data – they may be a real improvement.' : 'The new settings did worse on unseen data – the gain was most likely luck (overfitting). Better not to apply them.'}</p></div>`;
       h += pastTrendCard('9999-12-31', true, R.split, 'Unseen part') + pastChartCard(R.end, true);
