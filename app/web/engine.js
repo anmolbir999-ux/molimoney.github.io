@@ -205,7 +205,9 @@
   }
 
   function niftyLookup(nb) {
+    // 200-day average; while the index has less history than that (Yahoo's Nifty starts Sept 2007) use the average of what exists (≥ 60 days)
     const s = sma(nb.c, 200), m = {};
+    { let acc = 0; for (let i = 0; i < Math.min(199, nb.c.length); i++) { acc += nb.c[i]; if (i >= 59) s[i] = acc / (i + 1); } }
     nb.d.forEach((d, i) => { m[d] = { c: nb.c[i], s200: s[i] }; });
     let last = null; const dates = nb.d;
     return (d) => { if (m[d]) return m[d]; // ffill

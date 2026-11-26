@@ -271,7 +271,7 @@
         <button class="chip ${B.quick ? 'on' : ''}" data-tstyle="quick">Quick – in and out</button></div>
       ${B.beat ? `<p class="m" style="margin:10px 0 0">Holds every stock and steps aside only in a market crash. No stop-losses, no switching. ${esc(BEAT_TEST.replace(/\\'/g, "'"))}</p>
         <label>Step aside when the Nifty is below its 200-day average by</label><div class="chips" style="margin:0">${[5, 8, 12, 100].map((v) => `<button class="chip ${B.crashGap === v ? 'on' : ''}" data-cg="${v}">${v >= 100 ? 'never' : v + '%'}</button>`).join('')}</div>
-        <p class="m" style="margin:8px 0 0">5%: smaller falls (worst −36% in 2008) · never: a bit more return on average, but fell 55% in 2008 and 39% in 2020.</p>` : `<p class="m" style="margin:10px 0 0">${B.quick ? 'Enters fast on sharp dips, pullbacks and volume breakouts, and exits fast: at the profit target, the stop-loss or the time limit. Expect many small trades lasting days. More trades means more costs (STT, stamp duty) – they can eat small profits.' : 'Holds trends for weeks or months. Fewer trades, bigger wins and losses. In tests it beat the Nifty in crashes but trailed it badly in bull markets (2012–21, 2023–25).'}</p>`}
+        <p class="m" style="margin:8px 0 0">5%: best in tests (+10.4 pts a period on average, worst fall −23% in 2008) · never: +9.7 pts, but fell 55% in 2008 and 39% in 2020.</p>` : `<p class="m" style="margin:10px 0 0">${B.quick ? 'Enters fast on sharp dips, pullbacks and volume breakouts, and exits fast: at the profit target, the stop-loss or the time limit. Expect many small trades lasting days. More trades means more costs (STT, stamp duty) – they can eat small profits.' : 'Holds trends for weeks or months. Fewer trades, bigger wins and losses. In tests it beat the Nifty in crashes but trailed it badly in bull markets (2012–21, 2023–25).'}</p>`}
       ${B.quick ? `<label>Take profit at</label><div class="chips" style="margin:0">${[0, 1, 1.5, 2, 3].map((v) => `<button class="chip ${B.tpAtr === v ? 'on' : ''}" data-tp="${v}">${v ? '+' + v + '× ATR' : 'off'}</button>`).join('')}</div>
         <label>Stop-loss</label><div class="chips" style="margin:0">${[1, 1.5, 2, 3].map((v) => `<button class="chip ${B.stopAtr === v ? 'on' : ''}" data-sl="${v}">${v}× ATR</button>`).join('')}</div>
         <label>Time limit</label><div class="chips" style="margin:0">${[0, 3, 5, 10, 20].map((v) => `<button class="chip ${B.maxDays === v ? 'on' : ''}" data-md="${v}">${v ? v + ' sessions' : 'off'}</button>`).join('')}</div>
@@ -361,7 +361,7 @@
     const gap = st.lastFetch ? (Date.now() - st.lastFetch) / 36e5 : 99;
     const mk = market();
     if (gap > 20 && !mk.open) add({ kind: 'warn', title: 'Time to catch up', body: `Last update was ${updatedAgo()}. Update so I can trade the sessions I missed and learn from them.`, act: ['update', 'Update now'] });
-    if (!B.beat) add({ kind: nRet != null && ret < nRet ? 'warn' : 'idea', title: nRet != null && ret < nRet ? `Behind the Nifty by ${(nRet - ret).toFixed(1)} pts – try Beat the Nifty` : 'Want to beat the Nifty?', body: `In tests on 9 two-year periods (2008–2026) my ${B.quick ? 'quick' : 'normal'} style beat the Nifty in only ${B.quick ? 'a few' : '3'} – switching in and out of stocks costs too much in rising markets. Beat the Nifty stays invested and only steps aside in a crash: it beat the Nifty in 6 of 9, by 7.6 pts on average.`, act: ['beat-on', 'Switch to Beat the Nifty'] });
+    if (!B.beat) add({ kind: nRet != null && ret < nRet ? 'warn' : 'idea', title: nRet != null && ret < nRet ? `Behind the Nifty by ${(nRet - ret).toFixed(1)} pts – try Beat the Nifty` : 'Want to beat the Nifty?', body: `In tests on 9 two-year periods (2008–2026) my ${B.quick ? 'quick' : 'normal'} style beat the Nifty in only ${B.quick ? 'a few' : '3'} – switching in and out of stocks costs too much in rising markets. Beat the Nifty stays invested and only steps aside in a crash: it beat the Nifty in 6 of 9, by 10.4 pts on average.`, act: ['beat-on', 'Switch to Beat the Nifty'] });
     const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending);
     if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + `. They fill at 9:15 AM – in ${dur(mk.nextOpen - Date.now())}.`, pill: 'tomorrow' });
     if (nRet != null && days >= 15 && ret < nRet - 3) add({ kind: 'warn', title: `The Nifty is ahead of me by ${(nRet - ret).toFixed(1)} pts`, body: `Since ${fdate(st.paperStart)} I made ${pct(ret)} while a Nifty index fund made ${pct(nRet)}. Most active strategies trail the index over time. Holding part of the money in NIFTYBEES (a Nifty ETF) keeps you close to the market.`, pill: `−${(nRet - ret).toFixed(1)} pts`, neg: true, act: st.cfg.tickers.includes('NIFTYBEES.NS') ? null : ['add:NIFTYBEES.NS', 'Add NIFTYBEES'] });
@@ -669,9 +669,17 @@
     return `<svg class="chart" style="height:${height}px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}${lab}</svg>`;
   }
   /** Account vs Nifty (both start at 100) from equity rows [date, value, nifty, capital]. */
-  function vsNifty(rows, extra = {}) {
-    const idx = returnIndex(rows), n0 = (rows.find((r) => r[2]) || [])[2];
-    return multiLine([{ v: down(idx, 300), color: css('--clay'), name: 'Paper account' }, { v: down(rows.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)), 300), color: css('--slate'), name: 'Nifty 50', dash: 1, w: 1.4 }], extra);
+  /** Another account's equity on the same dates, as an index starting at 100 (null where it has no value). */
+  function alignIdx(rows, other) {
+    if (!other || !other.length) return null;
+    const m = new Map(other.map((r) => [r[0], r[1]])), b0 = m.get(rows[0][0]) || other[0][1];
+    return rows.map((r) => (m.has(r[0]) ? (m.get(r[0]) / b0) * 100 : null));
+  }
+  function vsNifty(rows, extra = {}, beatRows = null, name = 'Paper account') {
+    const idx = returnIndex(rows), n0 = (rows.find((r) => r[2]) || [])[2], bt = alignIdx(rows, beatRows);
+    return multiLine([{ v: down(idx, 300), color: css('--clay'), name },
+      ...(bt ? [{ v: down(bt, 300), color: css('--ochre'), name: 'Beat the Nifty', w: 1.6 }] : []),
+      { v: down(rows.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)), 300), color: css('--slate'), name: 'Nifty 50', dash: 1, w: 1.4 }], extra);
   }
   const monthKey = (d) => d.slice(0, 7), monthLbl = (k) => new Date(k + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'short' });
   function monthlyBars(rows) {
@@ -978,7 +986,12 @@
         await new Promise((ok) => setTimeout(ok, 15));
         try { calls[tickers[i]] = E.trendCalls(data[tickers[i]].bars, nifty.bars, start, end); } catch (e) { calls[tickers[i]] = []; }
       }
-      Object.assign(train, { calls, data, nifty, pc: null, pcSym: tickers[0] });
+      Object.assign(train, { calls, data, nifty, pc: null, pcSym: tickers[0], beatEq: null, beatSt: null });
+      if (styleParams(train.style).beat !== true || train.mode === 'repeat') {
+        progress(syms.length, syms.length, 'Running Beat the Nifty for comparison');
+        await new Promise((ok) => setTimeout(ok, 20));
+        try { const bs = E.evaluate({ ...st.cfg, tickers, capital }, { ...E.brainParams(st), ...E.BEAT_PRESET, strategies: null }, data, nifty, start, end, lessons, mistakes); train.beatSt = bs; train.beatEq = bs.equity; } catch (e) { train.beatEq = null; }
+      }
       if (train.mode === 'repeat') {
         busy = false; cancel = false;
         btn.textContent = 'Update'; btn.classList.remove('stop'); $('progress').hidden = true;
@@ -1018,7 +1031,7 @@
     const sum = { id: Date.now().toString(36), at: nowIso(), label: train.label, start: eq[0]?.[0] || train.start, end: eq[eq.length - 1]?.[0] || train.end,
       brain: train.brain, stocks: Object.keys(tst.tickers).length, capital: train.runCapital, ret: idx.length ? idx[idx.length - 1] - 100 : 0,
       nret: nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null, dd: maxDD(idx), trades: S.n, win: S.winRate,
-      pnl: S.pnl, taught: false, trend: trendSum(), curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
+      pnl: S.pnl, taught: false, trend: trendSum(), beatRet: train.beatSt ? E.periodStats(train.beatSt, eq[0]?.[0] || train.start, eq[eq.length - 1]?.[0] || train.end).ret : null, curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
     st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
     store.save(st);
     Object.assign(train, { phase: 'done', playing: false, summary: sum, trades, preview: E.previewTeach(st, tst, todayIST()) });
@@ -1142,11 +1155,12 @@
       <p class="sub">${fd.length ? `earned on unseen data so far · current settings ${pct(comp('baseRes'))}` : `learning on ${fdate(R.start)} – ${fdate(R.folds[0].learnEnd)}…`}</p>
       ${roundsChart(R.history)}`;
     if (!done) h += `<div class="actions"><button class="btn warn sm" id="r_stop">Stop and check results</button></div>`;
-    if (done && R.fullBest) h += `<div style="margin-top:10px">${compareChart(R.fullBest.equity, R.baseFull.equity, R.folds[0].start, R.folds.map((f) => f.start).slice(1))}</div>`;
+    if (done && R.fullBest) h += `<div style="margin-top:10px">${compareChart(R.fullBest.equity, R.baseFull.equity, R.folds[0].start, R.folds.map((f) => f.start).slice(1), train.beatEq)}</div>`;
     h += `</div><div class="sec">Stretches</div><div class="card">` + R.folds.map((f, i) => `<div class="row"><div><b>${i + 1}. Learn to ${fdate(f.learnEnd)} → trade ${fdate(f.start)} – ${fdate(f.end)}</b><div class="m">${f.res ? esc(f.changes.join('; ') || 'current settings') : i === R.fold && !done ? 'learning…' : 'waiting'}</div></div>
       <div class="r">${f.res ? `<b class="${cls(f.res.ret - f.baseRes.ret)}">${pct(f.res.ret)}</b><div class="m">current ${pct(f.baseRes.ret)}</div>` : ''}</div></div>`).join('') + `</div>`;
     if (done) {
       h += `<p class="sub">${!R.changes.length ? 'I kept the current settings throughout.' : R.good ? 'Beat the current settings on unseen data – the most trustworthy kind of result.' : 'Did not beat the current settings on unseen data – better not to apply.'}</p>`;
+      h += beatCard(R.total, null, R.folds[0].start, R.end, 'Walk forward (unseen stretches)');
       h += pastTrendCard('9999-12-31', true, R.folds[0].start, 'Traded stretches') + pastChartCard(R.end, true);
       if (R.changes.length) h += `<div class="sec">Settings it ended with</div><div class="card"><ul class="tags" style="font-size:14px;color:var(--fg)">${R.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>`;
       h += `<div class="actions">${R.sum.taught ? '<span class="m">Applied to the live brain.</span>' : R.good || !R.changes.length ? `<button class="btn sm" id="r_apply">Apply ${R.changes.length ? 'settings + lessons' : 'lessons'}</button>` : `<button class="btn warn sm" id="r_force">Apply anyway</button>`}<button class="btn ghost sm" id="t_new">Train again</button></div>`;
@@ -1192,8 +1206,10 @@
     return t + trendLine();
   }
   function trendLine() {
-    const t = trendSum(); if (!t) return '';
-    return `\n\nTrend calls (same for every round – they don't depend on the settings): ${t.n} calls, right ${Math.round(t.acc * 100)}% vs ${Math.round(t.base * 100)}% for always guessing.`;
+    const R = train.rep, from = R && (R.route === 'walk' ? R.folds[0].start : R.split), b = R ? beatStats(from, R.end) : null;
+    const bl = b ? `\n\nBeat the Nifty (no tuning, stay invested) made **${pct(b.ret)}** on the same unseen ${R.route === 'walk' ? 'stretches' : 'part'}, vs **${pct(R.route === 'walk' ? R.total : R.unseenBest.ret)}** for the tuned settings.` : '';
+    const t = trendSum(); if (!t) return bl;
+    return bl + `\n\nTrend calls (same for every round – they don't depend on the settings): ${t.n} calls, right ${Math.round(t.acc * 100)}% vs ${Math.round(t.base * 100)}% for always guessing.`;
   }
 
   function applyRepeat(auto, force) {
@@ -1208,13 +1224,14 @@
   }
 
   /** Two training accounts + Nifty over the whole period; the part after `split` (never used for tuning) is shaded. */
-  function compareChart(eqA, eqB, split, vl = []) {
+  function compareChart(eqA, eqB, split, vl = [], eqC = null) {
     const n0 = (eqA.find((r) => r[2]) || [])[2], k = Math.ceil(eqA.length / 300) || 1, pick = (a) => a.filter((_, i) => i % k === 0 || i === a.length - 1);
-    const A = pick(eqA), B = pick(eqB.slice(0, eqA.length));
+    const A = pick(eqA), B = pick(eqB.slice(0, eqA.length)), Cc = alignIdx(A, eqC);
     const si = A.findIndex((r) => r[0] >= split);
     return multiLine([
       { v: A.map((r) => (r[1] / A[0][1]) * 100), color: css('--clay'), name: 'Best settings found' },
       { v: B.map((r) => (r[1] / B[0][1]) * 100), color: css('--sage'), name: 'Current settings', w: 1.5 },
+      ...(Cc ? [{ v: Cc, color: css('--ochre'), name: 'Beat the Nifty', w: 1.5 }] : []),
       { v: A.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)), color: css('--slate'), name: 'Nifty 50', dash: 1, w: 1.2 },
     ], { shade: si >= 0 ? si : null, shadeLabel: 'unseen', vlines: vl.map((d) => A.findIndex((r) => r[0] >= d)).filter((i) => i > 0) });
   }
@@ -1237,11 +1254,12 @@
       ${roundsChart(o.history)}`;
     if (!done) h += `<div class="actions"><button class="btn warn sm" id="r_stop">Stop and check results</button></div>`;
     h += `</div>`;
-    if (done && R.fullBest && R.fullBase) h += `<div class="card"><div class="lbl">Best settings vs current, whole period</div>${compareChart(R.fullBest.equity, R.fullBase.equity, R.split)}</div>`;
+    if (done && R.fullBest && R.fullBase) h += `<div class="card"><div class="lbl">Best settings vs current, whole period</div>${compareChart(R.fullBest.equity, R.fullBase.equity, R.split, [], train.beatEq)}</div>`;
     if (done) {
       h += `<div class="sec">Honest test on unseen data</div><div class="card">
         <div class="row"><div><b>Training part</b><div class="m">${fdate(R.start)} – ${fdate(R.split)} · what the search optimised</div></div><div class="r"><b>${pct(R.bestTrain)}</b><div class="m">current ${pct(R.baseTrain)}</div></div></div>
         <div class="row"><div><b>Unseen part</b><div class="m">${fdate(R.split)} – ${fdate(R.end)} · never used in the search</div></div><div class="r"><b class="${cls(R.unseenBest.ret - R.unseenBase.ret)}">${pct(R.unseenBest.ret)}</b><div class="m">current ${pct(R.unseenBase.ret)}${R.unseenBest.nifty != null ? ` · Nifty ${pct(R.unseenBest.nifty)}` : ''}</div></div></div>
+        ${beatStats(R.split, R.end) ? `<div class="row"><div><b>Beat the Nifty, unseen part</b><div class="m">stay invested, no tuning</div></div><div class="r"><b class="${cls(beatStats(R.split, R.end).ret - R.unseenBest.ret)}">${pct(beatStats(R.split, R.end).ret)}</b><div class="m">tuned ${pct(R.unseenBest.ret)}</div></div></div>` : ''}
         <p class="sub">${!R.changes.length ? 'Nothing beat the current settings.' : R.good ? 'The new settings also did better on unseen data – they may be a real improvement.' : 'The new settings did worse on unseen data – the gain was most likely luck (overfitting). Better not to apply them.'}</p></div>`;
       h += pastTrendCard('9999-12-31', true, R.split, 'Unseen part') + pastChartCard(R.end, true);
       if (R.changes.length) h += `<div class="sec">Best settings found</div><div class="card"><ul class="tags" style="font-size:14px;color:var(--fg)">${R.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>`;
@@ -1319,6 +1337,15 @@
   // paper account: the last downloaded prices stay in memory so any of the last ~250 sessions can be re-read
   let look = null;
   const lookAsOf = () => (look && look.nifty ? look.nifty.bars.d[look.nifty.bars.d.length - 1] : null);
+  /** Beat the Nifty over [from, to] of the current training data – null when this run already is Beat the Nifty. */
+  const beatStats = (from, to) => (train.beatSt ? E.periodStats(train.beatSt, from, to) : null);
+  function beatCard(ret, dd, from, to, label = 'This run') {
+    const b = beatStats(from, to); if (!b) return '';
+    const nret = b.nifty, row = (n, r, d, strong) => `<div class="row"><div><b>${n}</b></div><div class="r"><b class="${cls(r)}">${r == null ? '–' : pct(r)}</b><div class="m">${d == null ? '' : 'worst drop ' + pct(d)}</div></div></div>`;
+    const best = Math.max(ret, b.ret, nret == null ? -Infinity : nret);
+    return `<div class="sec">vs Beat the Nifty</div><div class="card">${row(label, ret, dd)}${row('Beat the Nifty', b.ret, b.dd)}${row('Nifty 50', nret, null)}
+      <p class="sub" style="margin-top:6px">${best === b.ret ? 'Beat the Nifty (stay invested, step aside only in a crash) did best here.' : best === ret ? `${label} did better than Beat the Nifty here.` : 'The Nifty itself did best here.'} Same period, same stocks, same money.</p></div>`;
+  }
   function viewTrain() {
     const ph = train.phase;
     if (ph === 'repeating' || ph === 'repeatDone') return viewRepeat();
@@ -1330,7 +1357,7 @@
       let h = `<div class="card hero"><div class="m">${ph === 'done' ? 'Training finished' : 'Trading the past'} · ${esc(train.label)}</div>
         <div class="big" style="font-size:28px">${last ? fdate(last[0]) : fdate(train.start)}</div>
         <p class="sub"><b class="${cls(ret)}">${pct(ret, 1)}</b> · ${inr(last ? last[1] : train.runCapital)} from ${inr(train.runCapital)}${nret != null ? ` · Nifty ${pct(nret)}` : ''}${idx.length > 1 ? ` · max drawdown ${pct(maxDD(idx))}` : ''}</p>
-        ${eq.length >= 2 ? vsNifty(eq) : ''}
+        ${eq.length >= 2 ? vsNifty(eq, {}, train.beatEq ? train.beatEq.filter((r) => r[0] <= last[0]) : null, 'This run') : ''}
         <div class="progress" style="padding:10px 0 0"><div class="bar" style="width:${Math.round((done / Math.max(train.total, 1)) * 100)}%"></div></div>
         <div class="m" style="margin-top:6px">${done}/${train.total} sessions${ph === 'running' && train.playing ? ` · about ${Math.ceil((train.total - done) / (train.speed * 2))}s left` : ''}</div>`;
       if (ph === 'running') {
@@ -1344,6 +1371,7 @@
       if (ph === 'done') {
         const s = train.summary, P = train.preview;
         const ct = train.trades.filter((t) => t.x).sort((a, b) => a.x.localeCompare(b.x));
+        h += beatCard(s.ret, s.dd, s.start, s.end);
         h += `<div class="card"><div class="lbl">Drop from the peak</div>${ddChart(idx)}</div>`;
         h += `<div class="card"><div class="lbl">Month by month</div>${barChart(monthlyBars(eq).slice(-24))}<div class="m">Return each month of the run (last 24 months shown).</div></div>`;
         h += `<div class="card"><div class="lbl">Each closed trade</div>${barChart(ct.slice(-60).map((t) => ({ v: t.ret, label: '' })))}<div class="m">${ct.length} trades${ct.length > 60 ? ', last 60 shown' : ''}.</div></div>`;
@@ -1404,7 +1432,7 @@
     h += `<div class="actions"><button class="btn" id="t_go">${train.mode === 'repeat' ? 'Start repeat training' : 'Start training'}</button></div>`;
     if (st.trainings.length) {
       h += `<div class="sec">Past training runs</div><div class="card">` + st.trainings.slice().reverse().map((x) => `<div class="row"><div><b>${esc(x.label)}</b><div class="m">${fdate(x.start)} – ${fdate(x.end)}${x.capital ? ` · ${inr(x.capital)}` : ''} · ${x.kind === 'repeat' ? 'search' : x.trades + ' trades'} · ${x.brain === 'fresh' ? 'fresh' : 'with lessons'}${x.taught ? ' · taught' : ''}</div></div>
-        <div class="r"><b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">${x.kind === 'repeat' ? `unseen ${pct(x.unseenBest)} vs ${pct(x.unseenBase)}` : `Nifty ${pct(x.nret)}`}${x.trend ? `<br>trend calls ${Math.round(x.trend.acc * 100)}%` : ''}</div></div></div>`).join('') + `</div>`;
+        <div class="r"><b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">${x.kind === 'repeat' ? `unseen ${pct(x.unseenBest)} vs ${pct(x.unseenBase)}` : `Nifty ${pct(x.nret)}`}${x.trend ? `<br>trend calls ${Math.round(x.trend.acc * 100)}%` : ''}${x.beatRet != null ? `<br>beat-the-Nifty ${pct(x.beatRet)}` : ''}</div></div></div>`).join('') + `</div>`;
     }
     h += `<p class="note">Training reuses past data, so good results here can be luck or overfitting – the live paper account is the real test.</p>`;
     return h;
@@ -1461,7 +1489,7 @@
     const ch = E.applyParams(st, next, todayIST(), nowIso()); store.save(st);
     return ch;
   }
-  const BEAT_TEST = 'In tests on 9 two-year periods from 2008 to 2026 with 8 big stocks it beat the Nifty in 6 of them, by 7.6 points on average – but it trailed the Nifty in 2012–13 and 2023–26, and fell up to 36% in 2008. Simply holding the same 8 stocks did a bit better on average (+9.7) but fell 55% in 2008. Which stocks you pick matters most – and those 8 are today\'s winners, which flatters every test.';
+  const BEAT_TEST = 'In tests on 9 two-year periods from 2008 to 2026 with 8 big stocks it beat the Nifty in 6 of them, by 10.4 points on average – but it trailed the Nifty in 2012–13 and 2023–26, and fell up to 23% in 2008. Simply holding the same 8 stocks did a little worse on average (+9.7) and fell 55% in 2008. Which stocks you pick matters most – and those 8 are today\'s winners, which flatters every test.';
   const styleText = () => {
     const B = E.brainParams(st);
     if (B.beat) return `**Beat the Nifty**: I stay invested in each of your stocks (buying trends already under way) and only step aside when the Nifty falls ${B.crashGap >= 100 ? '– never, crash filter off' : `${B.crashGap}% below its 200-day average, buying back once it's above the average again`}. No stop-losses and no strategy switching – in tests, switching in and out is what made me lag the Nifty. ${BEAT_TEST.replace(/\\'/g, "'")}`;
@@ -1553,6 +1581,7 @@
     const TM = train.tst.learning.mistakes || [], tmNew = TM.filter((m) => !m.inherited), tmBlocked = TM.reduce((a, m) => a + (m.blocked || 0), 0);
     sum.mistakes = tmNew.length; sum.skipped = tmBlocked;
     return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}, ${E.brainParams(train.tst).quick ? 'quick trading' : E.brainParams(train.tst).beat ? 'Beat the Nifty' : 'normal trading'}) is done. I noted ${tmNew.length} mistake${tmNew.length === 1 ? '' : 's'} along the way and skipped repeating them ${tmBlocked}×. Trades lasted ${Number.isNaN(S2.avgDays) ? '–' : S2.avgDays.toFixed(1)} sessions on average${S2.targets ? `, ${S2.targets} hit the profit target` : ''}. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
+      (sum.beatRet != null ? `\n\nBeat the Nifty (stay invested, step aside only in a crash) would have made **${pct(sum.beatRet)}** over the same period${sum.beatRet > sum.ret ? ' – better than this run.' : ' – this run did better.'}` : '') +
       (sum.trend ? `\n\nTrend calls: I called each stock's next 20 sessions ${sum.trend.n}× using only what I knew then – right ${Math.round(sum.trend.acc * 100)}% vs ${Math.round(sum.trend.base * 100)}% for always guessing${sum.trend.acc - sum.trend.base >= 0.04 ? '.' : ', so not much of an edge.'}` : '') +
       (top.length ? `\n\nMy most common mistakes:\n${top.map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : '') +
       `\n\n${ch.length ? `Say **apply** and I'll use what I learned: add these ${P.added} trades to my evidence and ${ch.join(', ')}.` : `Say **apply** and I'll add these ${P.added} trades to my evidence. None of my rules would change.`} Remember: a good result on the past can be luck.`;
