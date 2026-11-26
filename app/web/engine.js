@@ -21,10 +21,10 @@
   // no fixed target – each strategy's own exit takes the profit – a 3× ATR stop and a 10-session limit.
   const QUICK_PRESET = { quick: true, beat: false, idle: 'cash', join: false, stopAtr: 3, tpAtr: 0, maxDays: 10, minScore: 0.3, reviewEvery: 21, quickEdge: 0.3 };
   const NORMAL_PRESET = { quick: false, beat: false, idle: 'cash', join: false, stopAtr: 3, tpAtr: 0, maxDays: 0 };
-  // "Beat the Nifty": in 9 two-year periods 2008–2026 staying invested beat every timing approach; this keeps
-  // each stock held (joining trends already under way) and only steps aside when the Nifty falls 5% below its
-  // 200-day average – a crash filter, back in once the Nifty is above its average again.
-  const BEAT_PRESET = { quick: false, beat: true, idle: 'crash', crashGap: 5, join: true, stopAtr: 0, tpAtr: 0, maxDays: 0 };
+  // "Beat the Nifty": stay invested in each stock (joining trends already under way). In the honest test with real
+  // Nifty 50 membership, holding every member equally beat the Nifty with dividends by ~0.9 pts/yr over 2010–2026
+  // with no crash filter, while a 5% crash filter cost ~3–4 pts/yr – so the filter is off by default (still a setting).
+  const BEAT_PRESET = { quick: false, beat: true, idle: 'crash', crashGap: 100, join: true, stopAtr: 0, tpAtr: 0, maxDays: 0 };
   const brainParams = (st) => ({ ...BRAIN_DEFAULTS, stopAtr: st.cfg.stopAtr, ...(st.cfg.brain || {}) });
   const allowedStrategies = (B) => (B.strategies ? B.strategies.filter((k) => !!STRATEGIES[k].quick === !!B.quick) : null) || (B.quick ? QUICK : NORMAL);
 
@@ -925,8 +925,38 @@
   // for training on the past: today's Nifty 50 plus former members, including ones that later collapsed – the
   // liquidity filter (top 50 by traded value at each rebalance) then stands in for "was in the Nifty back then"
   const ROT_UNIVERSE = [...NIFTY50, ...['BPCL', 'UPL', 'DIVISLAB', 'YESBANK', 'ZEEL', 'VEDL', 'IOC', 'GAIL', 'BHEL', 'IDEA', 'DLF', 'ACC', 'AMBUJACEM', 'PNB', 'BANKBARODA', 'LUPIN', 'AUROPHARMA', 'SAIL',
-    'TATAPOWER', 'RCOM', 'RELINFRA', 'SIEMENS', 'IDFCFIRSTB', 'SUZLON', 'UNITECH', 'SAMMAANCAP', 'RPOWER', 'ABB', 'NMDC', 'CANBK', 'HINDPETRO', 'TATACOMM'].map((x) => x + '.NS')];
-  const ROT_DEFAULTS = { topN: 10, lookback: 252, skip: 21, weight: 'invvol', gradual: false, crashGap: 5, buffer: 2, taxAware: true, riskAdj: false, minHist: 300, liquid: 50 };
+    'TATAPOWER', 'RCOM', 'RELINFRA', 'SIEMENS', 'IDFCFIRSTB', 'SUZLON', 'UNITECH', 'SAMMAANCAP', 'RPOWER', 'ABB', 'NMDC', 'CANBK', 'HINDPETRO', 'TATACOMM',
+    'BOSCHLTD', 'GLAXO', 'JINDALSTEL', 'NATIONALUM', 'SHREECEM', 'INDUSTOWER', 'UNITDSPR', 'ETERNAL', 'JIOFIN', 'TMPV'].map((x) => x + '.NS')];
+  // Nifty 50 membership month by month, Jan 2008 – Aug 2025: [from, until) per stock. Reconstructed from NSE
+  // press releases by github.com/vishalvx/nifty-indices-datasets (MIT); approximate – some dates are a month off.
+  // After Aug 2025 the current list is used. Lets backtests pick only from stocks that were in the index at the time.
+  const NIFTY50_HIST = {"ABB.NS":[["2008-01-31","2010-10-01"]],"ACC.NS":[["2008-01-31","2017-10-03"]],"ADANIENT.NS":[["2022-09-30",null]],"ADANIPORTS.NS":[["2015-09-28",null]],"AMBUJACEM.NS":[["2008-01-31","2018-04-01"]],"APOLLOHOSP.NS":[["2022-03-31",null]],"ASIANPAINT.NS":[["2012-04-01",null]],"AUROPHARMA.NS":[["2016-04-01","2018-04-01"]],"AXISBANK.NS":[["2009-04-01",null]],"BAJAJ-AUTO.NS":[["2008-01-31","2008-04-01"],["2010-10-01",null]],"BAJAJFINSV.NS":[["2018-04-01",null]],"BAJFINANCE.NS":[["2017-10-03",null]],"BANKBARODA.NS":[["2012-04-01","2017-10-03"]],"BEL.NS":[["2024-10-01",null]],"BHARTIARTL.NS":[["2008-01-31",null]],"BHEL.NS":[["2008-01-31","2017-04-01"]],"BOSCHLTD.NS":[["2015-05-29","2018-04-01"]],"BPCL.NS":[["2008-01-31","2025-04-01"]],"BRITANNIA.NS":[["2019-04-01","2025-04-01"]],"CAIRN.NS":[["2008-01-31","2016-04-01"]],"CIPLA.NS":[["2008-01-31",null]],"COALINDIA.NS":[["2011-10-01",null]],"DIVISLAB.NS":[["2020-09-25","2024-10-01"]],"DLF.NS":[["2008-04-01","2015-03-27"]],"DRREDDY.NS":[["2008-01-31","2008-10-01"],["2010-10-01",null]],"EICHERMOT.NS":[["2016-04-01",null]],"ETERNAL.NS":[["2025-04-01",null]],"GAIL.NS":[["2008-01-31","2021-03-31"]],"GLAXO.NS":[["2008-01-31","2008-04-01"]],"GRASIM.NS":[["2008-01-31","2010-04-01"],["2011-03-28","2017-05-29"],["2018-04-01",null]],"HCLTECH.NS":[["2008-01-31",null]],"HDFC.NS":[["2008-01-31","2023-07-01"]],"HDFCBANK.NS":[["2008-01-31",null]],"HDFCLIFE.NS":[["2020-07-31",null]],"HEROMOTOCO.NS":[["2008-01-31",null]],"HINDALCO.NS":[["2008-01-31",null]],"HINDPETRO.NS":[["2017-10-03","2019-04-01"]],"HINDUNILVR.NS":[["2008-01-31",null]],"SAMMAANCAP.NS":[["2017-04-01","2019-08-27"]],"ICICIBANK.NS":[["2008-01-31",null]],"IDEA.NS":[["2008-01-31","2010-10-01"],["2015-03-27","2017-04-01"]],"IDFC.NS":[["2009-10-01","2015-05-29"]],"INDUSINDBK.NS":[["2013-04-01",null]],"INDUSTOWER.NS":[["2016-04-01","2020-09-25"]],"INFY.NS":[["2008-01-31",null]],"IOC.NS":[["2017-04-01","2022-03-31"]],"ITC.NS":[["2008-01-31",null]],"JINDALSTEL.NS":[["2009-06-17","2015-03-27"]],"JIOFIN.NS":[["2025-04-01",null]],"JPASSOCIAT.NS":[["2009-10-01","2014-03-28"]],"JSWSTEEL.NS":[["2018-10-01",null]],"KOTAKBANK.NS":[["2010-04-01",null]],"LT.NS":[["2008-01-31",null]],"LTIM.NS":[["2023-07-01","2024-10-01"]],"LUPIN.NS":[["2012-10-01","2018-10-01"]],"M&M.NS":[["2008-01-31",null]],"MARUTI.NS":[["2008-01-31",null]],"UNITDSPR.NS":[["2014-03-28","2014-09-26"]],"NATIONALUM.NS":[["2008-01-31","2009-10-01"]],"NESTLEIND.NS":[["2019-08-27",null]],"NMDC.NS":[["2013-04-01","2015-09-28"]],"NTPC.NS":[["2008-01-31",null]],"ONGC.NS":[["2008-01-31",null]],"PNB.NS":[["2008-01-31","2016-04-01"]],"POWERGRID.NS":[["2008-04-01",null]],"RANBAXY.NS":[["2008-01-31","2014-03-28"]],"RCOM.NS":[["2008-01-31","2012-04-01"]],"RELCAPITAL.NS":[["2009-01-12","2011-10-01"]],"RELIANCE.NS":[["2008-01-31",null]],"RELINFRA.NS":[["2008-01-31","2013-10-04"]],"RPL.NS":[["2008-01-31","2009-06-17"]],"RPOWER.NS":[["2008-10-01","2012-04-01"]],"SAIL.NS":[["2008-01-31","2012-10-01"]],"SATYAMCOMP.NS":[["2008-01-31","2009-01-12"]],"SBILIFE.NS":[["2020-09-25",null]],"SBIN.NS":[["2008-01-31",null]],"VEDL.NS":[["2010-10-01","2013-10-04"],["2013-10-04","2016-04-01"],["2017-05-29","2020-07-31"]],"SHREECEM.NS":[["2020-03-19","2022-09-30"]],"SHRIRAMFIN.NS":[["2024-03-28",null]],"SIEMENS.NS":[["2008-01-31","2013-04-01"]],"STER.NS":[["2008-01-31","2012-10-01"]],"SUNPHARMA.NS":[["2008-01-31",null]],"SUZLON.NS":[["2008-01-31","2011-03-28"]],"TATACOMM.NS":[["2008-01-31","2008-04-01"],["2008-04-01","2009-10-01"]],"TATACONSUM.NS":[["2021-03-31",null]],"TMPV.NS":[["2008-01-31",null]],"TATAPOWER.NS":[["2008-01-31","2017-10-03"]],"TATASTEEL.NS":[["2008-01-31",null]],"TCS.NS":[["2008-01-31",null]],"TECHM.NS":[["2014-03-28",null]],"TITAN.NS":[["2018-04-01",null]],"TRENT.NS":[["2024-10-01",null]],"ULTRACEMCO.NS":[["2012-10-01",null]],"UNITECH.NS":[["2008-01-31","2010-10-01"]],"UPL.NS":[["2017-10-03","2024-03-28"]],"WIPRO.NS":[["2008-01-31","2013-04-01"],["2013-10-04",null]],"YESBANK.NS":[["2015-03-27","2020-03-19"]],"ZEEL.NS":[["2008-01-31","2009-04-01"],["2014-09-26","2020-09-25"]]};
+  const NIFTY50_HIST_END = '2025-08-31';
+  function inNifty50(sym, d) {
+    if (d > NIFTY50_HIST_END) return NIFTY50.includes(sym);
+    const R = NIFTY50_HIST[sym]; if (!R) return false;
+    return R.some(([a, b]) => (d >= a || a === '2008-01-31') && (b === null || d < b));
+  }
+  // Monthly returns 2010–2026 from the honest backtests (real Nifty 50 membership, costs, tax): momentum top 10,
+  // every member held equally (≈ Beat the Nifty), and NIFTYBEES (the Nifty with dividends).
+  const MC_SERIES = {"from":"2010-02","to":"2026-10","momentum":[0.0339,0.0569,-0.0109,-0.0573,0.0021,0.0472,0.0169,0.1165,0.0381,0.0101,0.0399,-0.0702,-0.0518,0.0234,0.0194,-0.0361,0,0,0,0,0,0,0,0,0.0252,0.023,0.0006,-0.0448,0.0324,-0.0019,0.0295,0.0655,-0.0104,0.0401,0.0008,-0.0047,-0.0112,0.0297,0.0546,0.0355,-0.0214,0.0209,-0.0426,-0.006,0.0667,-0.0257,0.0334,0.0152,0.0689,-0.0605,0.0095,-0.0156,0.0872,-0.0055,0.0491,-0.0073,0.0409,0.0354,-0.0237,0.0628,-0.0262,-0.0209,-0.0564,0.0427,-0.0016,0.0384,-0.0726,0,0,0,0,0,0,0,-0.0316,0.0334,0.0207,0.0464,0.0402,-0.0215,-0.0059,-0.0527,-0.0308,0.1143,0.0142,0.023,0.0434,0.0081,-0.0254,0.0986,0.0466,-0.0061,0.0275,-0.03,0.0522,0.0252,-0.0401,-0.0368,0.0731,-0.0172,-0.0015,0.0934,0.0212,-0.08,-0.057,0.0048,-0.0151,0.0261,0.0122,0.0477,0.0356,0.0178,-0.0044,-0.0593,0.0012,0.0344,0.0122,-0.0055,0.0221,-0.0097,-0.0121,-0.0304,-0.0067,0,0,0.02,-0.0147,0.0401,0.0018,0.033,0.0937,-0.0475,0.0006,0.054,0.0534,0.0534,0.0238,0.051,0.0374,0.025,0.0428,-0.0577,0.0371,-0.0204,-0.0108,-0.0316,-0.0876,-0.0525,0,0,0.0582,-0.0251,0.0693,0.0041,-0.0342,-0.0116,-0.0367,0.0021,0.0461,0.0499,0.0626,0.0248,-0.003,0.045,-0.0251,0.0774,0.1067,0.0348,0.0102,0.04,-0.0048,0.0062,0.0489,0.0784,0.0218,0.0242,-0.1286,-0.0567,-0.0496,-0.0173,-0.0765,0,-0.0183,0.0346,0.0567,-0.0502,0.0014,0.0383,0.0258,0.0084,0.0059,-0.0353,0.0311,-0.0443,-0.0092,0,0,0,0,0,0],"equal":[0.0087,0.0595,0.0043,-0.0417,0.0509,0.0113,0.0111,0.1117,-0.0029,-0.027,0.0441,-0.0919,-0.0552,0.1005,-0.0061,-0.0535,0.0272,-0.0128,-0.0807,-0.0121,0.0816,-0.0885,-0.0488,0.1504,0.0534,-0.0225,-0.0108,-0.0618,0.0739,-0.016,-0.007,0.0967,-0.0264,0.0441,0.0203,0.0141,-0.0668,-0.0166,0.0541,-0.0029,-0.034,-0.0278,-0.0356,0.0701,0.0945,-0.0115,0.0324,-0.0484,0.0243,0.1093,-0.0101,0.1201,0.0699,-0.0017,0.0288,-0.0005,0.0456,0.026,-0.0312,0.0549,0.0007,-0.0365,-0.0305,0.0323,-0.0175,0.0198,-0.0734,-0.0128,0.0207,-0.0107,0.0017,-0.067,-0.0724,0.1272,0.0298,0.0232,0.0336,0.0499,0.0245,-0.018,0.0068,-0.0341,-0.0195,0.0635,0.0307,0.0231,0.0151,0.0146,-0.0143,0.0582,-0.0012,-0.0044,0.0609,-0.0263,0.0318,0.0179,-0.0425,-0.039,0.0542,-0.0123,-0.0143,0.0451,0.035,-0.0719,-0.0497,0.0222,0.0136,-0.0279,0.0221,0.0665,0.0092,0.0009,-0.0195,-0.0739,-0.0234,0.0451,0.0529,0.0063,0.0003,-0.0233,-0.0781,-0.239,0.1578,0.0122,0.0623,0.0654,0.0554,-0.0222,0.0238,0.1419,0.0798,-0.0022,0.087,0.0212,0.023,0.0675,0.0155,0.0161,0.0649,0.0389,-0.0001,-0.0379,0.0277,0.0053,-0.0256,0.0324,-0.0008,-0.0353,-0.0582,0.1095,0.0405,-0.028,0.0414,0.032,-0.03,-0.0189,-0.0382,0.0082,0.0539,0.0414,0.0445,0.0314,-0.0163,0.0376,-0.0232,0.0778,0.0772,0.0194,0.0235,0.0175,0.0094,0.0052,0.0605,0.0524,0.0167,0.0297,-0.0776,-0.0243,-0.0195,0.0028,-0.0629,0.0639,0.0243,0.0234,0.0383,-0.0308,0.0037,0.0184,0.0432,0.0132,0.0089,-0.0173,0.0107,-0.101,0.0809,-0.0005,-0.0059,0.0386,-0.0097,-0.0615,0.0123],"index":[-0.0079,0.067,-0.0038,-0.0339,0.0522,0.0172,0.0049,0.1046,0.0108,-0.0196,0.0382,-0.1036,-0.0236,0.0789,-0.0082,-0.029,0.0129,-0.011,-0.097,-0.0169,0.0769,-0.0894,-0.042,0.1188,0.0486,-0.0329,-0.0154,-0.0503,0.0707,-0.0113,0.0003,0.0845,-0.0053,0.0467,0.0043,0.0217,-0.0565,-0.0137,0.0431,0.0138,-0.0207,-0.0143,-0.0524,0.0571,0.0922,-0.0184,0.0214,-0.0318,0.0278,0.0561,0.0042,0.0757,0.0565,0.0202,0.0333,0.0013,0.0421,0.0335,-0.0351,0.0668,-0.0031,-0.0463,-0.0329,0.0288,-0.0032,0.0243,-0.0644,-0.0082,0.0207,-0.0187,-0.0004,-0.0507,-0.0707,0.117,0.0049,0.0396,0.0196,0.0454,0.0171,-0.0196,0.0037,-0.0483,-0.0051,0.0448,0.0394,0.0349,0.0124,0.034,-0.0064,0.0597,-0.0123,-0.0113,0.0546,-0.0072,0.0256,0.047,-0.0429,-0.0345,0.0595,0.0007,-0.0006,0.0635,0.0309,-0.0637,-0.0496,0.0464,0.0015,-0.0018,-0.001,0.0672,0.0201,0.0149,-0.0076,-0.054,-0.0082,0.0425,0.0323,0.0161,0.0128,-0.0153,-0.062,-0.2293,0.1331,-0.0269,0.0803,0.0776,0.0255,-0.0091,0.0387,0.1109,0.0773,-0.0199,0.0688,0.0065,-0.001,0.0624,0.014,0.0033,0.0876,0.0301,0.0055,-0.039,0.0223,-0.0009,-0.0309,0.0387,-0.0182,-0.03,-0.046,0.0871,0.0396,-0.0366,0.0505,0.043,-0.0325,-0.0232,-0.0193,0.0008,0.0391,0.0323,0.0341,0.0331,-0.0221,0.0187,-0.0266,0.0528,0.0789,0.0025,0.0124,0.0153,0.0126,0.0044,0.065,0.0384,0.012,0.026,-0.0615,-0.0028,-0.02,-0.0056,-0.0553,0.0594,0.0334,0.022,0.0307,-0.0253,-0.0115,0.0053,0.0489,0.0186,-0.004,-0.0291,-0.005,-0.1116,0.0733,-0.0156,0.0151,0.0206,-0.0092,-0.0596,0.017]};
+  /**
+   * Block bootstrap: stitch random 12-month stretches of history into `years`-long futures, the SAME stretches for
+   * the strategy and the index, and report the 10th/50th/90th percentile of ₹1 → ₹x and how often it beat the index.
+   */
+  function monteCarlo(key, years = 5, n = 2000, seed = 7) {
+    const A = MC_SERIES[key], B = MC_SERIES.index, L = A.length, block = 12, need = years * 12; let r = seed;
+    const rnd = () => { r = (r * 1103515245 + 12345) % 2147483648; return r / 2147483648; };
+    const fa = [], fb = []; let wins = 0;
+    for (let k = 0; k < n; k++) {
+      let va = 1, vb = 1, m = 0;
+      while (m < need) { const st = Math.floor(rnd() * (L - block)); for (let j = 0; j < block && m < need; j++, m++) { va *= 1 + A[st + j]; vb *= 1 + B[st + j]; } }
+      fa.push(va); fb.push(vb); if (va > vb) wins++;
+    }
+    const pc = (a, q) => a.slice().sort((x, y) => x - y)[Math.floor(q * (a.length - 1))];
+    return { years, n, p10: pc(fa, 0.1), p50: pc(fa, 0.5), p90: pc(fa, 0.9), i10: pc(fb, 0.1), i50: pc(fb, 0.5), i90: pc(fb, 0.9), beat: wins / n, from: MC_SERIES.from, to: MC_SERIES.to };
+  }
+  const ROT_DEFAULTS = { topN: 10, lookback: 252, skip: 21, weight: 'invvol', gradual: false, crashGap: 5, buffer: 2, taxAware: true, riskAdj: false, minHist: 300, liquid: 50, members: true, volTarget: 0 };
   function newRot(capital, cfg = {}) {
     return { cfg: { ...ROT_DEFAULTS, ...cfg }, capital, cash: capital, pos: {}, lastDate: null, start: null, equity: [], trades: [], log: [], pending: null,
       expo: 1, lastMonth: null, tax: { paid: 0, fy: null, st: 0, lt: 0 }, costs: 0, splitsDone: {}, divs: 0, invested: capital };
@@ -938,29 +968,39 @@
     const tv = sma(b.c.map((c, i) => c * (b.v[i] || 0)), 126); // average traded value – a point-in-time stand-in for "big enough to be in the Nifty"
     return (D._rot = { b, idx: Object.fromEntries(b.d.map((d, i) => [d, i])), vol, s200, tv, n });
   }
+  /**
+   * Indian equity capital-gains tax as it was on the sale date: STCG 15% (20% from 23 Jul 2024);
+   * LTCG 0% before Apr 2018, then 10% above ₹1 lakh a year (12.5% above ₹1.25 lakh from 23 Jul 2024).
+   */
+  const taxRates = (d) => (d >= '2024-07-23' ? { st: 0.20, lt: 0.125, ex: 125000 } : d >= '2018-04-01' ? { st: 0.15, lt: 0.10, ex: 100000 } : { st: 0.15, lt: 0, ex: 0 });
   function rotTaxYearEnd(R, d) {
-    const T = R.tax, stG = Math.max(0, T.st), ltNet = T.lt + Math.min(0, T.st) /* ST losses offset LT gains */, ltG = Math.max(0, ltNet - 125000);
-    const due = Math.round(stG * 0.20 + ltG * 0.125);
+    const T = R.tax, rt = taxRates(T.lastSale || d), stG = Math.max(0, T.st), ltNet = T.lt + Math.min(0, T.st) /* ST losses offset LT gains */, ltG = Math.max(0, ltNet - rt.ex);
+    const stRate = T.st > 0 && T.stTax != null ? Math.min(0.2, Math.max(0.15, T.stTax / T.st)) : rt.st; // blended if the rate changed mid-year
+    const due = Math.round(stG * stRate + ltG * rt.lt);
+    T.stTax = null; T.lastSale = null;
     if (due > 0) { R.cash -= due; T.paid += due; R.log.push({ d, t: `Paid ₹${due.toLocaleString('en-IN')} capital-gains tax for FY ${T.fy}-${String((T.fy + 1) % 100).padStart(2, '0')}` }); }
     T.st = 0; T.lt = 0;
   }
-  function rotSell(R, sym, q, px, d, reason) {
+  /** Slippage by how much the stock trades: ₹500 cr+/day 0.05%, ₹100 cr+ 0.1%, ₹20 cr+ 0.2%, less 0.4%. */
+  const rotSlip = (R, data, sym, d) => { const P = rotPrep(data, sym), i = P.idx[d], tv = i !== undefined ? P.tv[i] || 0 : 0; return tv >= 5e9 ? 0.05 : tv >= 1e9 ? 0.1 : tv >= 2e8 ? 0.2 : 0.4; };
+  function rotSell(R, sym, q, px, d, reason, slip = 0.05) {
     const P = R.pos[sym]; if (!P || q <= 0) return;
-    q = Math.min(q, P.q); const p = px * (1 - 0.05 / 100), c = cost(q * p, 'SELL');
+    q = Math.min(q, P.q); const p = px * (1 - slip / 100), c = cost(q * p, 'SELL');
     R.cash += q * p - c; R.costs += c;
     let left = q, gain = 0, basis = 0;
     while (left > 0 && P.lots.length) { // FIFO lots → short or long term
       const L = P.lots[0], k = Math.min(left, L.q), g = k * (p - L.p) - c * (k / q);
       const days = (Date.parse(d) - Date.parse(L.d)) / 864e5;
-      if (days > 365) R.tax.lt += g; else R.tax.st += g;
+      if (days > 365) R.tax.lt += g; else { R.tax.st += g; R.tax.stTax = (R.tax.stTax || 0) + g * taxRates(d).st; }
+      R.tax.lastSale = d;
       gain += g; basis += k * L.p; L.q -= k; left -= k; if (L.q <= 0) P.lots.shift();
     }
     P.q -= q;
     R.trades.push({ sym, side: 'SELL', d, q, p, pnl: gain, ret: basis ? (gain / basis) * 100 : 0, r: reason });
     if (P.q <= 0) delete R.pos[sym];
   }
-  function rotBuy(R, sym, q, px, d, reason) {
-    const p = px * (1 + 0.05 / 100);
+  function rotBuy(R, sym, q, px, d, reason, slip = 0.05) {
+    const p = px * (1 + slip / 100);
     while (q > 0 && q * p + cost(q * p, 'BUY') > R.cash) q--;
     if (q <= 0) return;
     const c = cost(q * p, 'BUY'); R.cash -= q * p + c; R.costs += c;
@@ -980,7 +1020,11 @@
       if (!Number.isFinite(m) || !(v > 0) || b.c[i] <= 0) continue;
       rows.push({ sym, mom: m, vol: v, score: C.riskAdj ? m / (v * Math.sqrt(252)) : m, px: b.c[i], tv: P.tv[i] || 0 });
     }
-    if (C.liquid && rows.length > C.liquid) { rows.sort((a, b) => b.tv - a.tv); rows.length = C.liquid; }
+    // who may be picked: stocks in the Nifty 50 on that date (membership history), or else the 50 most-traded
+    const inMap = (m, sym) => (m[sym] || []).some(([a, b]) => (d >= a || a === m._first) && (b === null || d < b));
+    if (C.memberMap) { const k = rows.filter((r) => inMap(C.memberMap, r.sym)); rows.length = 0; rows.push(...k); } // other indices (tests)
+    else if (C.members) { const k = rows.filter((r) => inNifty50(r.sym, d)); rows.length = 0; rows.push(...k); }
+    else if (C.liquid && rows.length > C.liquid) { rows.sort((a, b) => b.tv - a.tv); rows.length = C.liquid; }
     rows.sort((a, b) => b.score - a.score); rows.forEach((r, k) => { r.rank = k + 1; });
     return rows;
   }
@@ -994,6 +1038,11 @@
     const sel = pick.slice(0, Math.max(C.topN, keep.length));
     const raw = sel.map((s) => (C.weight === 'invvol' ? 1 / by[s].vol : 1)), tot = raw.reduce((a, b) => a + b, 0) || 1;
     const w = {}; sel.forEach((s, k) => { w[s] = Math.min(raw[k] / tot, 2 / C.topN); });
+    if (C.volTarget && R.equity.length > 64) { // volatility targeting: cut exposure when the account's own swings get big
+      const e = R.equity.slice(-64).map((r) => r[1]), lr = e.slice(1).map((v, i) => Math.log(v / e[i])), m = lr.reduce((a, b) => a + b, 0) / lr.length;
+      const vol = Math.sqrt(lr.reduce((a, b) => a + (b - m) ** 2, 0) / (lr.length - 1)) * Math.sqrt(252) * 100;
+      if (vol > C.volTarget) ex *= Math.max(0.3, C.volTarget / vol);
+    }
     const ws = Object.values(w).reduce((a, b) => a + b, 0) || 1; for (const s in w) w[s] = (w[s] / ws) * ex;
     return { w, ex, rows: rows.slice(0, 25).map((r) => ({ sym: r.sym, mom: Math.round(r.mom * 1000) / 10, rank: r.rank })) };
   }
@@ -1034,10 +1083,10 @@
           const tq = want[s] || 0, cur = R.pos[s].q;
           // tax-aware: don't sell a winner that turns long-term within 45 days if it is still ranked well
           if (tq < cur && R.cfg.taxAware && plan.near && plan.near[s] && plan.ex > 0) continue;
-          if (tq === 0) rotSell(R, s, cur, P.b.o[i], d, plan.why[s] || 'dropped out');
-          else if (cur - tq > cur * 0.2) rotSell(R, s, cur - tq, P.b.o[i], d, 'rebalance'); }
+          if (tq === 0) rotSell(R, s, cur, P.b.o[i], d, plan.why[s] || 'dropped out', rotSlip(R, data, s, d));
+          else if (cur - tq > cur * 0.2) rotSell(R, s, cur - tq, P.b.o[i], d, 'rebalance', rotSlip(R, data, s, d)); }
         for (const s in want) { const P = rotPrep(data, s), i = P.idx[d], cur = R.pos[s] ? R.pos[s].q : 0, tq = want[s];
-          if (tq > cur && (cur === 0 || tq - cur > cur * 0.2)) rotBuy(R, s, tq - cur, P.b.o[i], d, cur ? 'rebalance' : 'joined the top ' + R.cfg.topN); }
+          if (tq > cur && (cur === 0 || tq - cur > cur * 0.2)) rotBuy(R, s, tq - cur, P.b.o[i], d, cur ? 'rebalance' : 'joined the top ' + R.cfg.topN, rotSlip(R, data, s, d)); }
       }
       const n = nl(d), gap = n && n.s200 ? n.c / n.s200 - 1 : 0, gapPct = gap * 100;
       // decide at the close: monthly rebalance, or immediately when the market's exposure level changes
@@ -1391,7 +1440,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
-    predict, SIGNALS, signalMatrix, NIFTY50, ROT_UNIVERSE, ROT_DEFAULTS, newRot, rotRun, rotRank, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
+    predict, SIGNALS, signalMatrix, NIFTY50, ROT_UNIVERSE, ROT_DEFAULTS, monteCarlo, taxRates, inNifty50, NIFTY50_HIST_END, newRot, rotRun, rotRank, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, BEAT_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };
