@@ -261,11 +261,38 @@
       : mode === 'stop' ? 'You stopped trading: all positions sell at the next open, no new buys' : 'You resumed trading', 'user', nowIso);
   }
 
+  // ------------------------------------------------------------------ paper money
+  const netCapital = (st) => st.invested - st.withdrawn;
+  const cashTotal = (st) => Object.values(st.tickers).reduce((s, T) => s + T.live.cash, 0);
+  /**
+   * Deposit (amount > 0) or withdraw (amount < 0) paper money. Deposits are split equally across
+   * stocks; withdrawals come only from uninvested cash, in proportion to each stock's cash.
+   * Recorded as capital flows, so returns are not affected. Returns { ok, amount, reason }.
+   */
+  function adjustCapital(st, amount, today, nowIso) {
+    amount = Math.round(amount);
+    const T = Object.values(st.tickers), n = T.length || st.cfg.tickers.length;
+    if (!amount) return { ok: false, reason: 'Amount is zero' };
+    if (amount > 0) {
+      if (T.length) T.forEach((t) => { t.live.cash += amount / T.length; });
+      st.invested += amount;
+    } else {
+      const want = -amount, cash = cashTotal(st);
+      if (want > cash + 0.5) return { ok: false, reason: `Only ₹${Math.floor(cash).toLocaleString('en-IN')} is in cash – the rest is invested in shares`, cash };
+      T.forEach((t) => { t.live.cash -= cash > 0 ? want * (t.live.cash / cash) : 0; t.live.cash = Math.max(0, t.live.cash); });
+      st.withdrawn += want;
+    }
+    st.slice = Math.max(netCapital(st), 0) / n;
+    logEvent(st, today, amount > 0 ? `You added ₹${amount.toLocaleString('en-IN')} of paper money` : `You withdrew ₹${(-amount).toLocaleString('en-IN')} of paper money`, 'user', nowIso);
+    return { ok: true, amount };
+  }
+
   // ------------------------------------------------------------------ add / remove stocks
   function addTicker(st, sym, today, nowIso) {
     if (st.cfg.tickers.includes(sym)) return false;
     st.cfg.tickers.push(sym);
     st.invested += st.slice;
+    if (st.lastDate) ensureTicker(st, sym).fresh = true; // its cash counts immediately; history is studied on the next update
     logEvent(st, today, `You added ${sym.replace('.NS', '')} with ₹${Math.round(st.slice).toLocaleString('en-IN')} paper capital`, 'user', nowIso);
     return true;
   }
@@ -381,11 +408,12 @@
     const prep = {};
     for (const sym of st.cfg.tickers) {
       if (!data[sym] || !data[sym].bars.d.length) continue;
-      const isNew = !st.tickers[sym];
+      const isNew = !st.tickers[sym] || st.tickers[sym].fresh;
       ensureTicker(st, sym);
       if (!isNew) applySplits(st, sym, data[sym].splits);
       prep[sym] = prepare(data[sym].bars, nl);
       if (isNew && st.lastDate) preRoll(st, sym, prep[sym], data[sym]);
+      delete st.tickers[sym].fresh;
     }
     const dates = [...new Set(Object.values(prep).flatMap((p) => p.raw.d))].sort()
       .filter((d) => (st.lastDate === null || d > st.lastDate) && (!st.training || d <= st.training.end));
@@ -542,6 +570,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker,
-    begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach };
+    begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach,
+    adjustCapital, netCapital, cashTotal };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(this);

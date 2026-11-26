@@ -115,7 +115,7 @@
   function rangeFor() {
     if (!st.lastDate) return st.cfg.warmYears + 2 <= 5 ? '5y' : '10y';
     const gap = (Date.now() - new Date(st.lastDate).getTime()) / 864e5;
-    const newStock = st.cfg.tickers.some((t) => !st.tickers[t]);
+    const newStock = st.cfg.tickers.some((t) => !st.tickers[t] || st.tickers[t].fresh);
     return newStock ? '5y' : gap < 300 ? '2y' : gap < 1100 ? '5y' : '10y';
   }
   const url = (s, r) => `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?range=${r}&interval=1d&events=div%2Csplit`;
@@ -267,7 +267,7 @@
 
   function stockRow(s, inAcct) {
     const t = st && st.tickers[s];
-    const meta = t ? `${t.active ? esc(E.STRATEGIES[t.active].label) : 'cash'}${t.live.qty ? ` · holding ${t.live.qty}` : ''}${t.removing ? ' · removing' : ''}` : inAcct && st ? 'added – downloads on next update' : '';
+    const meta = t && t.fresh ? 'added – studies its history on the next update' : t ? `${t.active ? esc(E.STRATEGIES[t.active].label) : 'cash'}${t.live.qty ? ` · holding ${t.live.qty}` : ''}${t.removing ? ' · removing' : ''}` : inAcct && st ? 'added – downloads on next update' : '';
     const price = t && t.lastClose ? px(t.lastClose) : '';
     return `<div class="row"><div><b>${sym(s)}</b><div class="m">${meta}</div></div>
       <div style="display:flex;align-items:center;gap:10px"><span class="m">${price}</span>
@@ -362,6 +362,11 @@
   function viewMore() {
     let h = '';
     if (N && N.canRemind && N.canRemind()) h += `<div class="sec">Reminder</div><div class="card"><div class="switch"><input type="checkbox" id="s_rem" ${N.reminderOn() ? 'checked' : ''}><span>Remind me at 4:15 PM on weekdays to update</span></div></div>`;
+    h += `<div class="sec">Paper money</div><div class="card">
+      <div class="row"><div><b>Account value</b><div class="m">${inr(E.cashTotal(st))} in cash · put in ${inr(st.invested)}${st.withdrawn ? ` · taken out ${inr(st.withdrawn)}` : ''}</div></div><div class="r"><b>${inr(eqNow())}</b></div></div>
+      <label>Amount (₹ – e.g. 50000, 50k, 1.5 lakh)</label><input id="m_amt" inputmode="decimal" placeholder="1 lakh">
+      <div class="actions"><button class="btn sm" id="m_add">Add</button><button class="btn ghost sm" id="m_wd">Withdraw</button><button class="btn ghost sm" id="m_set">Set account to this</button></div>
+      <p class="m" style="margin:10px 0 0">Added money is split equally across your stocks. Withdrawals come from cash only. Neither counts as profit or loss.</p></div>`;
     h += `<div class="sec">Download your data</div><div class="card">
       <div class="row"><div><b>Trades</b><div class="m">Every paper &amp; practice trade: dates, prices, P&amp;L, mistake tags</div></div><button class="btn sm" data-dl="trades">CSV</button></div>
       <div class="row"><div><b>Daily equity</b><div class="m">Date, account value, capital, return, Nifty</div></div><button class="btn sm" data-dl="equity">CSV</button></div>
@@ -565,6 +570,25 @@
   }
 
 
+  // ---------------------------------------------------------------- paper money
+  /** "50000", "50,000", "50k", "1.5 lakh", "2 crore", "₹3,00,000" → rupees (or null). */
+  function parseAmount(text) {
+    const m = String(text).toLowerCase().replace(/₹|rs\.?|inr/g, ' ').match(/(\d[\d,]*(?:\.\d+)?)\s*(k|thousand|l|lakhs?|lacs?|cr|crores?)?\b/);
+    if (!m) return null;
+    const n = parseFloat(m[1].replace(/,/g, '')), u = m[2] || '';
+    const mult = /^k|thousand/.test(u) ? 1e3 : /^(l|lakh|lac)/.test(u) ? 1e5 : /^cr/.test(u) ? 1e7 : 1;
+    return Number.isFinite(n) && n > 0 ? Math.round(n * mult) : null;
+  }
+  /** mode: 'add' | 'withdraw' | 'set' (set the account value). Returns a sentence for the user. */
+  function changeMoney(mode, amt) {
+    const delta = mode === 'set' ? amt - eqNow() : mode === 'withdraw' ? -amt : amt;
+    if (Math.abs(delta) < 1) return `The account is already ${inr(eqNow())}.`;
+    const r = E.adjustCapital(st, delta, todayIST(), nowIso());
+    if (!r.ok) return `I can't take out ${inr(-delta)}. ${r.reason}. Sell first (say **stop and sell all**), or withdraw less.`;
+    store.save(st);
+    return `${delta > 0 ? `Added ${inr(delta)}` : `Withdrew ${inr(-delta)}`} of paper money. The account is now **${inr(eqNow())}** (${inr(E.cashTotal(st))} in cash). Each stock now gets about ${inr(st.slice)} for new buys. This counts as a ${delta > 0 ? 'deposit' : 'withdrawal'}, not profit or loss.`;
+  }
+
   // ---------------------------------------------------------------- conversation
   const TITLES = { chat: 'Today', home: 'Portfolio', stocks: 'Stocks', train: 'Train on the past', brain: 'Brain', journal: 'Journal', more: 'Data & settings' };
   function md(t) { // tiny markdown: **bold**, "- " bullets, blank-line paragraphs
@@ -633,7 +657,7 @@
   }
 
   // what Moli understands
-  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons"), **teach**, say when the **market opens**, and **download trades** (or equity, brain log, history, backup).';
+  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons"), **teach**, say when the **market opens**, and **download trades** (or equity, brain log, history, backup).';
   async function respond(text) {
     const q = text.trim(), l = q.toLowerCase();
     const known = new Set([...Object.values(CATALOG).flat(), ...st.cfg.tickers.map(sym)]);
@@ -663,6 +687,12 @@
       return say(`Stopped. ${n ? `I'll sell all ${n} position${n > 1 ? 's' : ''} at the next open` : 'I hold nothing'} and won't buy until you say **resume**.`);
     }
     if (/\bpause\b/.test(l)) { E.setPause(st, 'pause', todayIST(), nowIso()); store.save(st); return say('Paused. No new buys – but open positions keep their stop-loss and exit signals. Say **resume** when you\'re ready.'); }
+    const amt = parseAmount(l);
+    if (/\b(deposit|withdraw|top ?up|capital|money|cash|funds?|rupees?)\b|₹|\brs\b/.test(l) || (amt && /^(add|put|remove|take|withdraw|set|change|make|increase|reduce)\b/.test(l))) {
+      if (!amt) return say(`The account is **${inr(eqNow())}**, with ${inr(E.cashTotal(st))} in cash. You've put in ${inr(st.invested)}${st.withdrawn ? ` and taken out ${inr(st.withdrawn)}` : ''}.\n\nTo change it, say **add 1 lakh**, **withdraw 50,000**, or **set money to 10 lakh**.`);
+      const mode = /\b(set|change|make)\b|\bto\b/.test(l) ? 'set' : /withdraw|remove|take|minus|reduce|less/.test(l) ? 'withdraw' : 'add';
+      return say(changeMoney(mode, amt));
+    }
     if (/^(add|buy|follow|track)\b/.test(l)) {
       const s0 = symIn(); if (!s0) return say('Which stock? For example **add AXISBANK**.');
       const s = normSym(s0); if (st.cfg.tickers.includes(s)) return say(`${sym(s)} is already in my list.`);
@@ -718,7 +748,7 @@
     const s = [];
     if (train.phase === 'done' && train.summary && !train.summary.taught) s.push('Teach');
     if (E.isPaused(st)) s.push('Resume');
-    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Train on the 2008 crisis', 'Train last 5 years', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
+    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Add 1 lakh', 'Train on the 2008 crisis', 'Train last 5 years', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
     return s.slice(0, 8);
   }
 
@@ -838,6 +868,11 @@
       store.save(st); tab = 'chat'; query = ''; render(); update();
     });
     on('s_del', () => { if (confirm('Delete the paper account and everything the brain learned? Download a backup first if you want to keep it.')) { st = null; store.clear(); setupPicks = new Set(DEFAULTS.tickers); render(); } });
+    const money = (mode) => () => {
+      const a = parseAmount($('m_amt').value); if (!a) return toast('Type an amount, e.g. 50000 or 1 lakh');
+      const msg = changeMoney(mode, a); toast(msg.replace(/\*\*/g, '').split('. ')[0]); render();
+    };
+    on('m_add', money('add')); on('m_wd', money('withdraw')); on('m_set', money('set'));
     const rem = $('s_rem');
     if (rem) rem.onchange = () => { N.setReminder(rem.checked); toast(rem.checked ? 'Reminder on' : 'Reminder off'); };
   }
