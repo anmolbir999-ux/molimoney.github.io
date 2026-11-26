@@ -1,21 +1,39 @@
-/* Paper Trader UI. Data from Yahoo Finance; state stored on the phone. */
+/* Moli Paper Trader UI. Prices from Yahoo Finance; everything is stored on the phone. */
 (function () {
   'use strict';
   const E = window.Engine;
   const NIFTY = '^NSEI';
+  const MAX_STOCKS = 25;
   const DEFAULTS = {
     tickers: ['RELIANCE.NS', 'HDFCBANK.NS', 'ICICIBANK.NS', 'INFY.NS', 'TCS.NS', 'ITC.NS', 'LT.NS', 'SBIN.NS'],
     capital: 500000, stopAtr: 3, riskPct: 0, slippage: 0.05, warmYears: 2,
   };
+  // Pick-list (all checked against Yahoo Finance, Nov 2026)
+  const CATALOG = {
+    'Banks & finance': ['HDFCBANK', 'ICICIBANK', 'SBIN', 'AXISBANK', 'KOTAKBANK', 'INDUSINDBK', 'BAJFINANCE', 'BAJAJFINSV', 'SHRIRAMFIN', 'JIOFIN', 'HDFCLIFE', 'SBILIFE'],
+    'IT': ['TCS', 'INFY', 'HCLTECH', 'WIPRO', 'TECHM'],
+    'Energy & utilities': ['RELIANCE', 'ONGC', 'BPCL', 'NTPC', 'POWERGRID', 'COALINDIA', 'ADANIENT', 'ADANIPORTS'],
+    'Consumer': ['ITC', 'HINDUNILVR', 'NESTLEIND', 'TATACONSUM', 'TITAN', 'ASIANPAINT', 'TRENT', 'ETERNAL'],
+    'Auto': ['MARUTI', 'M&M', 'TMPV', 'BAJAJ-AUTO', 'HEROMOTOCO', 'EICHERMOT'],
+    'Metals & materials': ['TATASTEEL', 'JSWSTEEL', 'HINDALCO', 'ULTRACEMCO', 'GRASIM'],
+    'Pharma & health': ['SUNPHARMA', 'CIPLA', 'DRREDDY', 'APOLLOHOSP', 'MAXHEALTH'],
+    'Industrials & telecom': ['LT', 'BEL', 'BHARTIARTL', 'INDIGO'],
+    'ETFs': ['NIFTYBEES', 'JUNIORBEES', 'BANKBEES', 'ITBEES', 'GOLDBEES'],
+  };
+
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const inr = (x) => (x == null || Number.isNaN(x) ? '–' : '₹' + Math.round(x).toLocaleString('en-IN'));
+  const inr = (x) => (x == null || Number.isNaN(x) ? '–' : (x < 0 ? '−₹' : '₹') + Math.abs(Math.round(x)).toLocaleString('en-IN'));
   const px = (x) => (x == null || Number.isNaN(x) ? '–' : '₹' + x.toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 }));
-  const pct = (x, d = 1) => (x == null || Number.isNaN(x) ? '–' : (x > 0 ? '+' : '') + x.toFixed(d) + '%');
+  const pct = (x, d = 1) => (x == null || Number.isNaN(x) ? '–' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(d) + '%');
   const cls = (x) => (x > 0 ? 'up' : x < 0 ? 'down' : '');
   const sym = (s) => s.replace('.NS', '');
   const fdate = (d) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : '–');
-  const todayIST = () => new Date(Date.now() + 19800000).toISOString().slice(0, 10);
+  const IST = 19800000;
+  const ist = () => new Date(Date.now() + IST);
+  const todayIST = () => ist().toISOString().slice(0, 10);
+  const nowIso = () => new Date().toISOString();
+  const istStamp = (ms) => new Date((ms || Date.now()) + IST).toISOString().replace('T', ' ').slice(0, 19) + ' IST';
 
   // ---------------------------------------------------------------- native bridge
   const N = window.Android;
@@ -26,16 +44,65 @@
     return fetch(url).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); });
   }
   const store = {
-    load() { try { const s = N ? N.load() : localStorage.getItem('pt_state'); return s ? JSON.parse(s) : null; } catch (e) { return null; } },
-    save(st) { const s = JSON.stringify(st); if (N) N.save(s); else try { localStorage.setItem('pt_state', s); } catch (e) { /* ignore */ } },
+    load() { try { const s = N ? N.load() : localStorage.getItem('pt_state'); return s ? E.migrate(JSON.parse(s)) : null; } catch (e) { return null; } },
+    save(x) { const s = JSON.stringify(x); if (N) N.save(s); else try { localStorage.setItem('pt_state', s); } catch (e) { /* ignore */ } },
     clear() { if (N) N.save(''); else try { localStorage.removeItem('pt_state'); } catch (e) { /* ignore */ } },
   };
+  const pref = {
+    get(k, d) { try { const v = localStorage.getItem('pt_' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('pt_' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } },
+  };
+  function download(name, mime, text) {
+    if (N && N.download) {
+      const where = N.download(name, mime, text);
+      return where ? toast('Saved to ' + where) : toast('Could not save ' + name);
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+    a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    toast('Downloaded ' + name);
+  }
 
   let st = store.load();
-  let tab = st ? 'portfolio' : 'settings';
-  let busy = false;
+  let tab = 'home';
+  let busy = false, cancel = false;
+  let setupPicks = new Set(DEFAULTS.tickers);
+  let query = '';
 
-  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 3500); }
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 3800); }
+
+  // ---------------------------------------------------------------- market clock & countdowns
+  const at = (d, h, m) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, m) - IST;
+  function market() {
+    const n = ist(), day = n.getUTCDay(), mins = n.getUTCHours() * 60 + n.getUTCMinutes();
+    const weekday = day >= 1 && day <= 5, openM = 9 * 60 + 15, closeM = 15 * 60 + 30;
+    if (weekday && mins >= openM && mins < closeM) return { open: true, closeAt: at(n, 15, 30), nextOpen: nextOpen(n, mins, openM) };
+    return { open: false, nextOpen: nextOpen(n, mins, openM) };
+  }
+  function nextOpen(n, mins, openM) {
+    for (let k = 0; k < 8; k++) {
+      const d = new Date(n.getTime() + k * 864e5), wd = d.getUTCDay();
+      if (wd >= 1 && wd <= 5 && (k > 0 || mins < openM)) return at(d, 9, 15);
+    }
+    return null;
+  }
+  function dur(ms) {
+    if (ms <= 0) return 'now';
+    const s = Math.floor(ms / 1000), d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (d) return `${d}d ${h}h ${String(m).padStart(2, '0')}m`;
+    if (h) return `${h}h ${String(m).padStart(2, '0')}m`;
+    return `${m}m ${String(sec).padStart(2, '0')}s`;
+  }
+  const cdSpan = (ts) => `<span class="cd" data-cd="${ts}">${dur(ts - Date.now())}</span>`;
+  function tickCountdowns() {
+    document.querySelectorAll('[data-cd]').forEach((el) => { el.textContent = dur(+el.dataset.cd - Date.now()); });
+  }
+  function marketChip() {
+    const mk = market();
+    return mk.open ? `<span class="chip live">Market open · closes in ${cdSpan(mk.closeAt)}</span>`
+      : `<span class="chip closed">Market closed · opens in ${cdSpan(mk.nextOpen)}</span>`;
+  }
+
   function setStatus() {
     if (busy) return;
     if (!st) { $('status').textContent = 'Not started'; return; }
@@ -44,228 +111,366 @@
     $('status').textContent = `Updated ${a} · data to ${fdate(st.lastDate)}`;
   }
 
-  // ---------------------------------------------------------------- update
+  // ---------------------------------------------------------------- update with ETA + stop
   function rangeFor() {
     if (!st.lastDate) return st.cfg.warmYears + 2 <= 5 ? '5y' : '10y';
     const gap = (Date.now() - new Date(st.lastDate).getTime()) / 864e5;
-    return gap < 300 ? '2y' : gap < 1100 ? '5y' : '10y';
+    const newStock = st.cfg.tickers.some((t) => !st.tickers[t]);
+    return newStock ? '5y' : gap < 300 ? '2y' : gap < 1100 ? '5y' : '10y';
   }
   const url = (s, r) => `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?range=${r}&interval=1d&events=div%2Csplit`;
 
+  function progress(done, total, label) {
+    const avg = pref.get('fetch_ms', 900), think = st && !st.lastDate ? 1500 : 400;
+    const left = (total - done) * avg + think;
+    $('progress').hidden = false;
+    $('bar').style.width = Math.round((done / (total + 1)) * 100) + '%';
+    $('eta').textContent = `${label} · about ${Math.max(1, Math.round(left / 1000))}s left`;
+    $('status').textContent = `${done}/${total} downloaded`;
+  }
+
   async function update() {
-    if (busy || !st) return;
-    busy = true; $('updateBtn').disabled = true;
-    const r = rangeFor(), data = {}, failed = [];
+    if (!st) return;
+    if (busy) { cancel = true; $('updateBtn').textContent = 'Stopping…'; return; }
+    busy = true; cancel = false;
+    const btn = $('updateBtn'); btn.textContent = 'Stop'; btn.classList.add('stop');
+    const run = { started: nowIso(), status: 'ok', days: 0, from: null, to: null, msg: '' };
+    const syms = [NIFTY, ...st.cfg.tickers], r = rangeFor(), data = {}, failed = [];
+    let nifty = null;
     try {
-      $('status').textContent = 'Fetching Nifty…';
-      const nifty = E.parseYahoo(await httpGet(url(NIFTY, r)));
-      for (const s of st.cfg.tickers) {
-        $('status').textContent = `Fetching ${sym(s)}…`;
-        try { data[s] = E.parseYahoo(await httpGet(url(s, r))); } catch (e) { failed.push(sym(s)); }
+      for (let i = 0; i < syms.length; i++) {
+        if (cancel) throw new Error('stopped');
+        progress(i, syms.length, `Downloading ${syms[i] === NIFTY ? 'Nifty 50' : sym(syms[i])}`);
+        const t0 = Date.now();
+        try {
+          const p = E.parseYahoo(await httpGet(url(syms[i], r)));
+          if (syms[i] === NIFTY) nifty = p; else data[syms[i]] = p;
+          pref.set('fetch_ms', Math.round(0.7 * pref.get('fetch_ms', 900) + 0.3 * (Date.now() - t0)));
+        } catch (e) {
+          if (syms[i] === NIFTY) throw e;
+          failed.push(sym(syms[i]));
+        }
       }
-      $('status').textContent = st.lastDate ? 'Trading & learning…' : 'Warming up the brain on past data…';
-      await new Promise((ok) => setTimeout(ok, 30));
+      if (cancel) throw new Error('stopped');
+      progress(syms.length, syms.length, st.lastDate ? 'Trading & learning' : 'Brain practising on past data');
+      await new Promise((ok) => setTimeout(ok, 40));
+      const before = st.lastDate;
       const res = E.run(st, data, nifty, Date.now());
-      store.save(st);
+      Object.assign(run, { days: res.days, from: res.days ? (before || st.warmStart) : null, to: st.lastDate });
       const learned = res.newEvents.filter((e) => e.kind === 'learn' || e.kind === 'unlearn').length;
-      const first = res.days > 300;
-      if (first) toast(`Practised on ${res.days} past sessions · ${learned} lesson${learned === 1 ? '' : 's'} learned. Paper trading starts now.`);
-      else toast(res.days ? `${res.days} new session${res.days > 1 ? 's' : ''} processed` +
-        (res.newTrades ? ` · ${res.newTrades} trade event${res.newTrades > 1 ? 's' : ''}` : '') +
-        (learned ? ` · ${learned} lesson${learned > 1 ? 's' : ''} learned` : '') : 'Already up to date');
-      if (failed.length) toast('Could not fetch: ' + failed.join(', '));
+      if (res.days > 300) toast(`Practised on ${res.days} past sessions · ${learned} lessons learned. Paper trading starts now.`);
+      else toast(res.days ? `${res.days} new session${res.days > 1 ? 's' : ''}` + (res.newTrades ? ` · ${res.newTrades} trade event${res.newTrades > 1 ? 's' : ''}` : '') + (learned ? ` · ${learned} lesson${learned > 1 ? 's' : ''}` : '') : 'Already up to date');
+      if (failed.length) { run.msg = 'Could not fetch: ' + failed.join(', '); toast(run.msg); }
     } catch (e) {
-      toast('Update failed – check internet. ' + e.message);
+      run.status = e.message === 'stopped' ? 'stopped' : 'failed';
+      run.msg = run.status === 'stopped' ? 'Stopped by you – nothing changed' : e.message;
+      toast(run.status === 'stopped' ? 'Update stopped – nothing changed' : 'Update failed – check internet');
     }
-    busy = false; $('updateBtn').disabled = false; setStatus(); render();
+    run.finished = nowIso();
+    st.runs.push(run); if (st.runs.length > 500) st.runs.shift();
+    store.save(st);
+    busy = false; cancel = false;
+    btn.textContent = 'Update'; btn.classList.remove('stop');
+    $('progress').hidden = true;
+    setStatus(); render();
   }
 
   // ---------------------------------------------------------------- charts
-  /** Minimal profit/loss chart: area shaded green above the starting value, red below. */
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   let gid = 0;
-  function pnlChart(v, bench) {
-    const W = 340, H = 180, P = 4, pts = v.filter((x) => x != null);
-    if (pts.length < 2) return '';
-    const b = bench ? bench.filter((x) => x != null) : [];
-    const lo = Math.min(100, ...pts, ...b), hi = Math.max(100, ...pts, ...b), n = v.length;
+  /** Minimal profit/loss chart: area shaded green above the start, red below. */
+  function pnlChart(v) {
+    const W = 340, H = 170, P = 4;
+    if (v.length < 2) return '';
+    const lo = Math.min(100, ...v), hi = Math.max(100, ...v), n = v.length;
     const X = (i) => P + (i / (n - 1)) * (W - 2 * P), Y = (y) => P + (1 - (y - lo) / (hi - lo || 1)) * (H - 2 * P);
     const y0 = Y(100), up = css('--up'), dn = css('--down'), id = 'g' + ++gid;
     const line = v.map((y, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(y).toFixed(1)}`).join('');
     const area = `${line}L${X(n - 1).toFixed(1)},${y0.toFixed(1)}L${X(0).toFixed(1)},${y0.toFixed(1)}Z`;
-    let bl = '';
-    if (bench) { let d = ''; bench.forEach((y, i) => { if (y != null) d += `${d ? 'L' : 'M'}${X(i).toFixed(1)},${Y(y).toFixed(1)}`; });
-      bl = `<path d="${d}" fill="none" stroke="${css('--mut')}" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>`; }
-    const last = v[n - 1], col = last >= 100 ? up : dn;
+    const last = v[n - 1];
     return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
       <defs>
-        <linearGradient id="${id}u" x1="0" y1="${P}" x2="0" y2="${y0}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${up}" stop-opacity=".45"/><stop offset="1" stop-color="${up}" stop-opacity="0"/></linearGradient>
-        <linearGradient id="${id}d" x1="0" y1="${y0}" x2="0" y2="${H - P}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${dn}" stop-opacity="0"/><stop offset="1" stop-color="${dn}" stop-opacity=".45"/></linearGradient>
+        <linearGradient id="${id}u" x1="0" y1="${P}" x2="0" y2="${y0}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${up}" stop-opacity=".5"/><stop offset="1" stop-color="${up}" stop-opacity="0"/></linearGradient>
+        <linearGradient id="${id}d" x1="0" y1="${y0}" x2="0" y2="${H - P}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="${dn}" stop-opacity="0"/><stop offset="1" stop-color="${dn}" stop-opacity=".5"/></linearGradient>
         <clipPath id="${id}a"><rect x="0" y="0" width="${W}" height="${y0}"/></clipPath>
         <clipPath id="${id}b"><rect x="0" y="${y0}" width="${W}" height="${H - y0}"/></clipPath>
       </defs>
       <path d="${area}" fill="url(#${id}u)" clip-path="url(#${id}a)"/>
       <path d="${area}" fill="url(#${id}d)" clip-path="url(#${id}b)"/>
-      <line x1="0" x2="${W}" y1="${y0}" y2="${y0}" stroke="${css('--line')}" stroke-width="1"/>
-      ${bl}
-      <path d="${line}" fill="none" stroke="${up}" stroke-width="1.8" stroke-linejoin="round" clip-path="url(#${id}a)"/>
-      <path d="${line}" fill="none" stroke="${dn}" stroke-width="1.8" stroke-linejoin="round" clip-path="url(#${id}b)"/>
-      <circle cx="${X(n - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="3.5" fill="${col}"/>
-    </svg>` + (bench ? `<div class="legend"><span><i style="background:${col}"></i>Profit / loss</span><span><i style="background:${css('--mut')}"></i>Nifty 50</span></div>` : '');
+      <line x1="0" x2="${W}" y1="${y0}" y2="${y0}" stroke="${css('--line')}" stroke-width="1" stroke-dasharray="3 3"/>
+      <path d="${line}" fill="none" stroke="${up}" stroke-width="2" stroke-linejoin="round" clip-path="url(#${id}a)"/>
+      <path d="${line}" fill="none" stroke="${dn}" stroke-width="2" stroke-linejoin="round" clip-path="url(#${id}b)"/>
+      <circle cx="${X(n - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="4" fill="${last >= 100 ? up : dn}"/>
+    </svg>`;
   }
-  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  function curve(rows, base) {
-    if (!rows.length) return { eq: [], nf: [] };
-    const e0 = rows[0][1], n0 = rows.find((r) => r[2])?.[2];
-    return { eq: rows.map((r) => (r[1] / e0) * 100), nf: rows.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)) };
+  /** Time-weighted return index (adding/removing stocks is a deposit/withdrawal, not profit). */
+  function returnIndex(rows) {
+    if (!rows.length) return [];
+    const out = [100]; let idx = 100;
+    for (let i = 1; i < rows.length; i++) {
+      const flow = (rows[i][3] || 0) - (rows[i - 1][3] || 0), base = rows[i - 1][1] + flow;
+      idx *= base > 0 ? rows[i][1] / base : 1; out.push(idx);
+    }
+    return out;
   }
   function maxDD(v) { let pk = -Infinity, dd = 0; v.forEach((x) => { pk = Math.max(pk, x); dd = Math.min(dd, x / pk - 1); }); return dd * 100; }
 
-  // ---------------------------------------------------------------- views
-  function viewPortfolio() {
-    if (!st.lastDate) return `<p class="empty">Tap <b>Update</b> to download prices and start.</p>`;
-    const T = st.tickers, cap = st.cfg.capital;
-    const eqNow = Object.values(T).reduce((s, t) => s + E.equity(t.live, t.lastClose || 0), 0);
-    const live = st.equity, c = curve(live);
-    const nRet = c.nf.length > 1 && c.nf[c.nf.length - 1] ? c.nf[c.nf.length - 1] - 100 : null;
-    let h = `<div class="big">${inr(eqNow)}</div>
-      <p class="sub"><span class="${cls(eqNow - cap)}">${eqNow >= cap ? '+' : ''}${inr(eqNow - cap).replace('₹-', '−₹')} (${pct((eqNow / cap - 1) * 100, 2)})</span>
-      since ${fdate(st.paperStart)}${nRet != null ? ` · Nifty ${pct(nRet, 2)}` : ''}</p>`;
-    if (live.length >= 2) {
-      h += pnlChart(c.eq);
-    } else if (st.sim.length > 20) {
-      const s = curve(st.sim), r = s.eq[s.eq.length - 1] - 100, nr = s.nf[s.nf.length - 1] - 100;
-      h += `<div class="sec">Brain's practice run · ${fdate(st.sim[0][0])} – ${fdate(st.sim[st.sim.length - 1][0])}</div>`;
-      h += pnlChart(s.eq);
-      h += `<p class="sub">Simulated return ${pct(r)} (max drawdown ${pct(maxDD(s.eq))}) vs Nifty ${pct(nr)} (${pct(maxDD(s.nf.filter((x) => x)))}). Real paper trading started ${fdate(st.paperStart)}.</p>`;
-    }
-    const pos = Object.entries(T).filter(([, t]) => t.live.qty > 0);
-    h += `<div class="sec">Positions</div>`;
-    h += pos.length ? pos.map(([s, t]) => {
-      const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
-      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}</div></div>
-        <div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${px(t.lastClose)}</div></div></div>`;
-    }).join('') : `<p class="empty">No open positions. Cash: ${inr(eqNow)}</p>`;
+  const eqNow = () => Object.values(st.tickers).reduce((s, t) => s + E.equity(t.live, t.lastClose || 0), 0);
 
+  // ---------------------------------------------------------------- views
+  function viewHome() {
+    if (!st.lastDate) return `<div class="card"><p class="empty">Tap <b>Update</b> to download prices and start.</p><div class="chips">${marketChip()}</div></div>`;
+    const eq = eqNow(), pnl = eq + st.withdrawn - st.invested, idx = returnIndex(st.equity);
+    const ret = idx.length ? idx[idx.length - 1] - 100 : 0;
+    const nf = st.equity.filter((r) => r[2]), nRet = nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null;
+    const paused = E.isPaused(st);
+    let h = `<div class="card hero">
+      <div class="m">Paper account value</div>
+      <div class="big">${inr(eq)}</div>
+      <p class="sub"><b class="${cls(pnl)}">${inr(pnl)} (${pct(ret, 2)})</b> since ${fdate(st.paperStart)}${nRet != null ? ` · Nifty ${pct(nRet, 2)}` : ''}</p>`;
+    if (idx.length >= 2) h += pnlChart(idx);
+    else if (st.sim.length > 20) {
+      const s = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0]));
+      const sn = st.sim.filter((r) => r[2]), snr = (sn[sn.length - 1][2] / sn[0][2] - 1) * 100;
+      h += pnlChart(s) + `<p class="sub">Brain's practice run ${fdate(st.sim[0][0])} – ${fdate(st.sim[st.sim.length - 1][0])}: ${pct(s[s.length - 1] - 100)} (max drawdown ${pct(maxDD(s))}) vs Nifty ${pct(snr)}. Real paper trading started ${fdate(st.paperStart)}.</p>`;
+    }
+    h += `<div class="chips">${marketChip()}${paused ? `<span class="chip paused">${paused === 'stop' ? 'Stopped' : 'Paused'}</span>` : ''}</div></div>`;
+
+    if (paused) h += `<div class="banner">${paused === 'stop' ? 'Trading stopped: positions are sold at the next open and no new buys are made.' : 'Trading paused: no new buys. Open positions keep their stop-loss and exit signals.'}<div class="actions"><button class="btn sm" id="resume">Resume trading</button></div></div>`;
+    else h += `<div class="actions" style="margin:4px 0 0"><button class="btn ghost sm" id="pause">Pause new buys</button><button class="btn warn sm" id="stopall">Stop &amp; sell all</button></div>`;
+
+    const T = st.tickers, mk = market();
     const pend = Object.entries(T).filter(([, t]) => t.live.pending);
     const blk = Object.entries(T).filter(([, t]) => t.blockedToday && t.blockedToday.d === st.lastDate);
     if (pend.length || blk.length) {
-      h += `<div class="sec">Next session</div>`;
-      h += pend.map(([s, t]) => `<div class="row"><div><b>${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}</b><div class="m">at the open · ${esc(E.STRATEGIES[t.active]?.label || 'exit to cash')}</div></div></div>`).join('');
-      h += blk.map(([s, t]) => `<div class="row"><div><b>Skip ${sym(s)}</b><div class="m">${esc(E.STRATEGIES[t.active]?.label || '')} said buy, but a learned rule blocks it: ${t.blockedToday.rules.map((k) => esc(E.FEATURES[k].label.toLowerCase())).join(', ')}</div></div></div>`).join('');
+      h += `<div class="sec">Next open · in ${cdSpan(mk.nextOpen)}</div><div class="card">`;
+      h += pend.map(([s, t]) => `<div class="row"><div><b>${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}</b><div class="m">${t.removing ? 'removing stock' : esc(E.STRATEGIES[t.active]?.label || 'exit to cash')}</div></div><div class="r m">at the open</div></div>`).join('');
+      h += blk.map(([s, t]) => `<div class="row"><div><b>Skip ${sym(s)}</b><div class="m">${esc(E.STRATEGIES[t.active]?.label || '')} said buy – blocked by a learned rule: ${t.blockedToday.rules.map((k) => esc(E.FEATURES[k].label.toLowerCase())).join(', ')}</div></div></div>`).join('');
+      h += `</div>`;
     }
-    h += `<div class="sec">Stocks</div>` + Object.entries(T).map(([s, t]) => {
-      const sp = t.spark.c.slice(-120), ch = sp.length > 1 ? (sp[sp.length - 1] / sp[sp.length - 2] - 1) * 100 : 0;
-      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${t.active ? esc(E.STRATEGIES[t.active].label) : 'Brain says: stay in cash'}</div></div>
-        <div class="r">${px(t.lastClose)}<div class="m ${cls(ch)}">${pct(ch, 2)}</div></div></div>`;
-    }).join('');
+    const pos = Object.entries(T).filter(([, t]) => t.live.qty > 0);
+    h += `<div class="sec">Positions</div><div class="card">`;
+    h += pos.length ? pos.map(([s, t]) => {
+      const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
+      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}</div></div>
+        <div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${inr((t.lastClose - tr.ep) * tr.q)}</div></div></div>`;
+    }).join('') : `<p class="empty">No open positions – all ${inr(eq)} in cash.</p>`;
+    h += `</div>`;
+    const nextReview = Math.min(...Object.values(T).map((t) => E.REVIEW_EVERY - t.sinceReview));
+    h += `<p class="note">Next strategy review in ${Number.isFinite(nextReview) ? nextReview : '–'} session${nextReview === 1 ? '' : 's'}. Countdowns don't include NSE holidays. New prices arrive after 3:45 PM.</p>`;
+    return h;
+  }
+
+  function stockRow(s, inAcct) {
+    const t = st && st.tickers[s];
+    const meta = t ? `${t.active ? esc(E.STRATEGIES[t.active].label) : 'cash'}${t.live.qty ? ` · holding ${t.live.qty}` : ''}${t.removing ? ' · removing' : ''}` : inAcct && st ? 'added – downloads on next update' : '';
+    const price = t && t.lastClose ? px(t.lastClose) : '';
+    return `<div class="row"><div><b>${sym(s)}</b><div class="m">${meta}</div></div>
+      <div style="display:flex;align-items:center;gap:10px"><span class="m">${price}</span>
+      <button class="add ${inAcct ? 'rm' : ''}" data-${inAcct ? 'rm' : 'add'}="${esc(s)}" aria-label="${inAcct ? 'Remove' : 'Add'} ${sym(s)}">${inAcct ? '−' : '+'}</button></div></div>`;
+  }
+
+  function pickList(selected) {
+    const q = query.trim().toUpperCase();
+    let h = '';
+    for (const [grp, list] of Object.entries(CATALOG)) {
+      const items = list.map((x) => x + '.NS').filter((x) => !selected.has(x) && (!q || x.includes(q)));
+      if (!items.length) continue;
+      h += `<div class="grp">${grp}</div>` + items.map((x) => stockRow(x, false)).join('');
+    }
+    return h || `<p class="empty">No match in the list – add it as a custom symbol below.</p>`;
+  }
+
+  function viewStocks() {
+    const inAcct = st ? st.cfg.tickers : [...setupPicks];
+    const selected = new Set(inAcct);
+    let h = `<div class="sec">Your stocks · ${inAcct.length}/${MAX_STOCKS}</div><div class="card">${inAcct.length ? inAcct.map((s) => stockRow(s, true)).join('') : '<p class="empty">No stocks yet.</p>'}</div>`;
+    if (st) h += `<p class="note" style="margin-top:0">Each added stock gets ₹${Math.round(st.slice).toLocaleString('en-IN')} of paper money. Removing a stock sells it at the next open and withdraws its cash.</p>`;
+    h += `<div class="sec">Add stocks</div><div class="card"><input id="q" placeholder="Search NIFTY 50 & ETFs" value="${esc(query)}" autocomplete="off"><div id="pick">${pickList(selected)}</div>
+      <label>Custom NSE symbol</label><div style="display:flex;gap:8px"><input id="custom" placeholder="e.g. PIDILITIND" autocapitalize="characters"><button class="btn sm" id="addCustom">Add</button></div></div>`;
     return h;
   }
 
   function viewBrain() {
     if (!st.lastDate) return `<p class="empty">The brain starts after the first update.</p>`;
     const R = st.learning.rules;
-    let h = `<p class="sub">Every stock runs ${Object.keys(E.STRATEGIES).length} strategies in hidden paper accounts. Every ${E.REVIEW_EVERY} sessions the brain switches each stock to whichever worked best over the last year, or to cash if none did. Losing trades are tagged with their conditions; conditions that keep losing become rules.</p>`;
-    h += `<div class="sec">Learned rules</div>`;
-    h += Object.entries(E.FEATURES).map(([k, f]) => {
+    let h = `<div class="card"><p class="sub" style="margin:0">Each stock runs ${Object.keys(E.STRATEGIES).length} strategies in hidden paper accounts. Every ${E.REVIEW_EVERY} sessions the brain picks whichever worked best over the last year – or cash if none did. Losing trades are tagged; conditions that keep losing become rules.</p></div>`;
+    h += `<div class="sec">Learned rules</div><div class="card">` + Object.entries(E.FEATURES).map(([k, f]) => {
       const r = R[k] || {};
-      const ev = r.nWith ? `${r.nWith} trades with it: avg ${pct(r.meanWith)}, win ${Math.round((r.winWith || 0) * 100)}% · without: avg ${pct(r.meanWithout)}, win ${Math.round((r.winWithout || 0) * 100)}%` : 'Not enough trades yet';
-      return `<div class="row"><div><b>${esc(f.label)}</b><div class="m">${ev}</div></div>
-        <div class="r"><span class="pill ${r.active ? 'on' : ''}">${r.active ? 'Avoid' : 'Allowed'}</span></div></div>`;
-    }).join('');
-    h += `<div class="sec">Strategy per stock</div>`;
-    h += Object.entries(st.tickers).map(([s, t]) => {
-      const rows = Object.entries(t.scores || {}).filter(([, v]) => !Number.isNaN(v) && v != null).sort((a, b) => b[1] - a[1])
+      const ev = r.nWith ? `${r.nWith} trades with it: avg ${pct(r.meanWith)}, win ${Math.round((r.winWith || 0) * 100)}% · without: avg ${pct(r.meanWithout)}` : 'Not enough trades yet';
+      return `<div class="row"><div><b>${esc(f.label)}</b><div class="m">${ev}</div></div><div class="r"><span class="pill ${r.active ? 'on' : ''}">${r.active ? 'Avoid' : 'OK'}</span></div></div>`;
+    }).join('') + `</div>`;
+    h += `<div class="sec">Strategy per stock</div><div class="card">` + Object.entries(st.tickers).map(([s, t]) => {
+      const rows = Object.entries(t.scores || {}).filter(([, v]) => v != null && !Number.isNaN(v)).sort((a, b) => b[1] - a[1])
         .map(([k, v]) => `<tr><td>${k === t.active ? '<b>' : ''}${esc(E.STRATEGIES[k].label)}${k === t.active ? '</b>' : ''}</td><td class="${cls(v)}">${v.toFixed(2)}</td></tr>`).join('');
-      return `<details class="row" style="display:block"><summary style="display:flex;justify-content:space-between"><b>${sym(s)}</b>
-        <span class="m">${t.active ? esc(E.STRATEGIES[t.active].label) : 'Cash'} ›</span></summary>
+      return `<details class="row" style="display:block"><summary style="display:flex;justify-content:space-between"><b>${sym(s)}</b><span class="m">${t.active ? esc(E.STRATEGIES[t.active].label) : 'Cash'} · review in ${E.REVIEW_EVERY - t.sinceReview} ›</span></summary>
         <table><tr><td class="m">Strategy</td><td class="m">Sharpe, last year</td></tr>${rows || '<tr><td class="m">Not scored yet</td><td></td></tr>'}</table></details>`;
-    }).join('');
-    const evs = st.learning.events.slice(-40).reverse();
-    h += `<div class="sec">What the brain did</div>` + (evs.length ? evs.map((e) => `<div class="ev"><span class="d">${fdate(e.date)}${e.date < st.paperStart ? ' · practice' : ''}</span><br>${esc(e.text)}</div>`).join('') : '<p class="empty">Nothing yet.</p>');
+    }).join('') + `</div>`;
+    const evs = st.learning.events.slice(-50).reverse();
+    h += `<div class="sec">What happened</div><div class="card">` + (evs.length ? evs.map((e) => `<div class="ev"><span class="d">${fdate(e.date)}${e.date < st.paperStart ? ' · practice' : ''}${e.at && e.kind === 'user' ? ' · ' + istStamp(Date.parse(e.at)).slice(11, 16) : ''}</span><br>${esc(e.text)}</div>`).join('') : '<p class="empty">Nothing yet.</p>') + `</div>`;
     return h;
+  }
+
+  function allLiveTrades() {
+    return [...Object.entries(st.tickers).flatMap(([s, t]) => t.live.trades.map((x) => ({ ...x, sym: s }))), ...st.archive];
   }
 
   function viewJournal() {
     if (!st.lastDate) return `<p class="empty">No trades yet.</p>`;
-    const liveTr = Object.entries(st.tickers).flatMap(([s, t]) => t.live.trades.map((x) => ({ ...x, sym: s })));
-    const simTr = Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.map((x) => ({ ...x, sym: s })));
+    const liveTr = allLiveTrades();
+    const simTr = Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.filter((x) => x.x).map((x) => ({ ...x, sym: s })));
     const useSim = liveTr.filter((t) => t.x).length === 0;
-    const list = (useSim ? simTr.filter((t) => t.x) : liveTr).sort((a, b) => (b.x || b.e).localeCompare(a.x || a.e));
+    const list = (useSim ? simTr : liveTr).sort((a, b) => (b.x || b.e).localeCompare(a.x || a.e));
     const S = E.stats(list);
     let h = useSim ? `<p class="sub">No closed paper trades yet – showing the brain's practice trades from before ${fdate(st.paperStart)}.</p>` : '';
-    h += `<div class="grid" style="margin-top:10px">
-      <div><div class="sec">Closed trades</div><div class="big" style="font-size:24px">${S.n}</div></div>
-      <div><div class="sec">Win rate</div><div class="big" style="font-size:24px">${Number.isNaN(S.winRate) ? '–' : Math.round(S.winRate * 100) + '%'}</div></div>
-      <div><div class="sec">Avg win / loss</div><div style="font-size:16px"><span class="up">${pct(S.avgWin)}</span> / <span class="down">${pct(S.avgLoss)}</span></div></div>
-      <div><div class="sec">Net P&amp;L</div><div style="font-size:16px" class="${cls(S.pnl)}">${inr(S.pnl)}</div></div></div>`;
-    const losers = list.filter((t) => t.x && t.pnl <= 0), tally = {};
-    losers.forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
+    h += `<div class="card"><div class="grid">
+      <div><div class="m">Closed trades</div><div class="stat">${S.n}</div></div>
+      <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(S.winRate) ? '–' : Math.round(S.winRate * 100) + '%'}</div></div>
+      <div style="margin-top:10px"><div class="m">Avg win / loss</div><div><b class="up">${pct(S.avgWin)}</b> / <b class="down">${pct(S.avgLoss)}</b></div></div>
+      <div style="margin-top:10px"><div class="m">Net P&amp;L</div><div><b class="${cls(S.pnl)}">${inr(S.pnl)}</b></div></div></div></div>`;
+    const tally = {};
+    list.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
     const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-    if (tl.length) h += `<div class="sec">Most common mistakes</div>` + tl.slice(0, 6).map(([g, n]) => `<div class="row"><div>${esc(g)}</div><div class="r"><b>${n}</b></div></div>`).join('');
-    h += `<div class="sec">Trades</div>`;
-    h += list.length ? list.slice(0, 80).map((t) => {
-      const open = !t.x, r = open ? (st.tickers[t.sym].lastClose / t.ep - 1) * 100 : t.ret;
+    if (tl.length) h += `<div class="sec">Most common mistakes</div><div class="card">` + tl.slice(0, 6).map(([g, n]) => `<div class="row"><div>${esc(g)}</div><div class="r"><b>${n}</b></div></div>`).join('') + `</div>`;
+    h += `<div class="sec">Trades</div><div class="card">` + (list.length ? list.slice(0, 80).map((t) => {
+      const open = !t.x, last = st.tickers[t.sym]?.lastClose, r = open ? (last / t.ep - 1) * 100 : t.ret;
       const tags = !open && t.pnl <= 0 ? `<ul class="tags">${E.diagnose(t).map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : '';
       return `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:10px">
         <div><b>${sym(t.sym)}</b> <span class="m">${esc(E.STRATEGIES[t.s]?.label || '')}</span>
-        <div class="m">${fdate(t.e)} → ${open ? 'open' : fdate(t.x) + (t.r === 'stop' ? ' (stop)' : '')} · ${t.q} sh @ ${px(t.ep)}</div></div>
+        <div class="m">${fdate(t.e)} → ${open ? 'open' : fdate(t.x) + (t.r === 'stop' ? ' (stop)' : '')} · ${t.q} @ ${px(t.ep)}</div></div>
         <div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${open ? '' : inr(t.pnl)}</div></div></div>${tags}</div>`;
-    }).join('') : '<p class="empty">No trades yet. The brain only buys when a strategy it trusts gives a fresh signal.</p>';
+    }).join('') : '<p class="empty">No trades yet. The brain only buys when a strategy it trusts gives a fresh signal.</p>') + `</div>`;
     return h;
   }
 
-  function viewSettings() {
-    const c = st ? st.cfg : DEFAULTS, locked = !!st;
-    let h = st ? `<p class="sub">Paper account started ${fdate(st.paperStart)}. Changing these settings starts a new account.</p>`
-      : `<div class="big" style="font-size:26px">Start paper trading</div><p class="sub">Uses free Yahoo Finance prices. No money, no broker – fills are simulated at the next session's open with Indian costs (STT, stamp duty, GST, DP) and slippage.</p>`;
-    h += `<label>Stocks (NSE symbols, comma separated)</label><textarea id="s_t">${esc(c.tickers.map(sym).join(', '))}</textarea>
-      <div class="grid">
+  function viewSetup() {
+    const c = DEFAULTS;
+    return `<div class="card hero"><div class="big" style="font-size:26px">Start paper trading</div>
+      <p class="sub">Free Yahoo Finance prices. No money, no broker – fills are simulated at the next session's open with Indian costs (STT, stamp duty, GST, DP) and slippage. The brain practises on past data first.</p></div>
+      <div class="card"><div class="grid">
         <div><label>Paper capital (₹)</label><input id="s_c" inputmode="numeric" value="${c.capital}"></div>
-        <div><label>Practice years before start</label><input id="s_w" inputmode="numeric" value="${c.warmYears}"></div>
+        <div><label>Practice years</label><input id="s_w" inputmode="numeric" value="${c.warmYears}"></div>
         <div><label>Stop-loss (× ATR, 0 = off)</label><input id="s_s" inputmode="decimal" value="${c.stopAtr}"></div>
-        <div><label>Risk per trade % (0 = full slice)</label><input id="s_r" inputmode="decimal" value="${c.riskPct}"></div>
-      </div>
-      <p class="hint">Capital is split equally across stocks. The brain practises on past data first, then paper trades from today.</p>
-      <div class="actions"><button class="btn" id="s_go">${locked ? 'Start new account' : 'Start'}</button></div>`;
-    if (N && N.canRemind && N.canRemind()) {
-      const on = N.reminderOn();
-      h += `<div class="sec">Daily reminder</div><div class="switch"><input type="checkbox" id="s_rem" ${on ? 'checked' : ''}><span>Remind me at 4:15 PM on weekdays to update</span></div>`;
-    }
-    if (st) h += `<div class="sec">Data</div><div class="actions"><button class="btn danger" id="s_del">Delete paper account</button></div>`;
+        <div><label>Risk per trade % (0 = full)</label><input id="s_r" inputmode="decimal" value="${c.riskPct}"></div>
+      </div><div class="actions"><button class="btn" id="s_go">Start with ${setupPicks.size} stock${setupPicks.size === 1 ? '' : 's'}</button></div></div>` + viewStocks();
+  }
+
+  function viewMore() {
+    let h = '';
+    if (N && N.canRemind && N.canRemind()) h += `<div class="sec">Reminder</div><div class="card"><div class="switch"><input type="checkbox" id="s_rem" ${N.reminderOn() ? 'checked' : ''}><span>Remind me at 4:15 PM on weekdays to update</span></div></div>`;
+    h += `<div class="sec">Download your data</div><div class="card">
+      <div class="row"><div><b>Trades</b><div class="m">Every paper &amp; practice trade: dates, prices, P&amp;L, mistake tags</div></div><button class="btn sm" data-dl="trades">CSV</button></div>
+      <div class="row"><div><b>Daily equity</b><div class="m">Date, account value, capital, return, Nifty</div></div><button class="btn sm" data-dl="equity">CSV</button></div>
+      <div class="row"><div><b>Brain log</b><div class="m">Every switch, lesson and action, with timestamps</div></div><button class="btn sm" data-dl="brain">CSV</button></div>
+      <div class="row"><div><b>Update history</b><div class="m">When each update ran, what it processed, stopped or failed</div></div><button class="btn sm" data-dl="runs">CSV</button></div>
+      <div class="row"><div><b>Full backup</b><div class="m">Everything, as JSON</div></div><button class="btn sm" data-dl="backup">JSON</button></div>
+      <p class="m" style="margin:8px 0 0">File names include the export time, e.g. moli-trades-2026-11-26_16-30-05.csv</p></div>`;
+    h += `<div class="sec">Account</div><div class="card">
+      <div class="row"><div><b>Started</b><div class="m">${fdate(st.paperStart)} · paper money put in ${inr(st.invested)}${st.withdrawn ? ` · withdrawn ${inr(st.withdrawn)}` : ''}</div></div></div>
+      <div class="row"><div><b>Settings</b><div class="m">Stop ${st.cfg.stopAtr}× ATR · risk ${st.cfg.riskPct ? st.cfg.riskPct + '%' : 'full slice'} · ${st.cfg.warmYears}y practice</div></div></div>
+      <div class="actions"><button class="btn warn sm" id="s_del">Delete account &amp; start over</button></div></div>`;
     return h;
   }
 
-  function bindSettings() {
-    const go = $('s_go');
-    if (go) go.onclick = () => {
-      const tickers = $('s_t').value.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)
-        .map((s) => (s.includes('.') || s.startsWith('^') ? s : s + '.NS'));
+  // ---------------------------------------------------------------- exports
+  const csvCell = (v) => { if (v == null || (typeof v === 'number' && Number.isNaN(v))) return ''; const s = String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = (rows) => rows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n';
+  const r2 = (x) => (x == null || Number.isNaN(x) ? '' : Math.round(x * 100) / 100);
+  function exportData(kind) {
+    const stamp = new Date(Date.now() + IST).toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+    const exported = istStamp();
+    let rows, name = `moli-${kind}-${stamp}.csv`, mime = 'text/csv';
+    if (kind === 'trades') {
+      const feats = (f) => (f ? Object.keys(E.FEATURES).filter((k) => f[k]).join('; ') : '');
+      const one = (t, phase) => [phase, sym(t.sym), E.STRATEGIES[t.s]?.label || '', t.x ? 'closed' : 'open', t.e, r2(t.ep), t.q, r2(t.stop), t.x || '', r2(t.xp), t.r || '', r2(t.pnl), r2(t.ret), feats(t.f), t.x && t.pnl <= 0 ? E.diagnose(t).join('; ') : '', exported];
+      rows = [['phase', 'stock', 'strategy', 'status', 'entry_date', 'entry_price', 'qty', 'stop', 'exit_date', 'exit_price', 'exit_reason', 'pnl_inr', 'return_pct', 'entry_conditions', 'lessons', 'exported_at'],
+        ...allLiveTrades().map((t) => one(t, 'paper')),
+        ...Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.map((x) => one({ ...x, sym: s }, 'practice')))];
+    } else if (kind === 'equity') {
+      const idx = returnIndex(st.equity), sidx = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0]));
+      rows = [['phase', 'date', 'account_value_inr', 'net_capital_inr', 'return_index', 'nifty_close', 'exported_at'],
+        ...st.sim.map((r, i) => ['practice', r[0], r[1], '', r2(sidx[i]), r2(r[2]), exported]),
+        ...st.equity.map((r, i) => ['paper', r[0], r[1], r[3], r2(idx[i]), r2(r[2]), exported])];
+    } else if (kind === 'brain') {
+      rows = [['market_date', 'recorded_at_ist', 'kind', 'event'], ...st.learning.events.map((e) => [e.date, e.at ? istStamp(Date.parse(e.at)) : '', e.kind, e.text])];
+    } else if (kind === 'runs') {
+      rows = [['started_at_ist', 'finished_at_ist', 'status', 'sessions_processed', 'from_date', 'to_date', 'message'],
+        ...st.runs.map((r) => [istStamp(Date.parse(r.started)), r.finished ? istStamp(Date.parse(r.finished)) : '', r.status, r.days, r.from, r.to, r.msg])];
+    } else {
+      name = `moli-backup-${stamp}.json`; mime = 'application/json';
+      return download(name, mime, JSON.stringify({ exported_at: exported, app: 'Moli Paper Trader', state: st }, null, 1));
+    }
+    download(name, mime, csv(rows));
+  }
+
+  // ---------------------------------------------------------------- actions
+  const normSym = (s) => { s = s.trim().toUpperCase(); return s.includes('.') || s.startsWith('^') ? s : s + '.NS'; };
+  async function addStock(s) {
+    const list = st ? st.cfg.tickers : [...setupPicks];
+    if (list.includes(s)) return toast(sym(s) + ' is already in your list');
+    if (list.length >= MAX_STOCKS) return toast(`Maximum ${MAX_STOCKS} stocks`);
+    if (!st) { setupPicks.add(s); return render(); }
+    E.addTicker(st, s, todayIST(), nowIso()); store.save(st); render();
+    toast(`${sym(s)} added – downloading its history`); update();
+  }
+  async function addCustom() {
+    const s = normSym($('custom').value || '');
+    if (!s || s === '.NS') return;
+    const b = $('addCustom'); b.disabled = true; b.textContent = '…';
+    try {
+      const p = E.parseYahoo(await httpGet(url(s, '1mo')));
+      if (!p.bars.d.length) throw new Error('no data');
+      await addStock(s);
+    } catch (e) { toast(`${sym(s)} not found on Yahoo Finance`); }
+    b.disabled = false; b.textContent = 'Add';
+  }
+  function removeStock(s) {
+    if (!st) { setupPicks.delete(s); return render(); }
+    const T = st.tickers[s];
+    if (T && T.live.qty > 0 && !confirm(`Sell ${sym(s)} at the next open and remove it?`)) return;
+    const gone = E.removeTicker(st, s, todayIST(), nowIso());
+    store.save(st); render();
+    toast(gone ? `${sym(s)} removed` : `${sym(s)} will be sold at the next open, then removed`);
+  }
+
+  function bind() {
+    const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    on('pause', () => { E.setPause(st, 'pause', todayIST(), nowIso()); store.save(st); render(); toast('Paused: no new buys'); });
+    on('stopall', () => { if (!confirm('Sell every position at the next open and stop buying?')) return; E.setPause(st, 'stop', todayIST(), nowIso()); store.save(st); render(); toast('Stopped: positions sell at the next open'); });
+    on('resume', () => { E.setPause(st, null, todayIST(), nowIso()); store.save(st); render(); toast('Trading resumed'); });
+    document.querySelectorAll('[data-add]').forEach((b) => { b.onclick = () => addStock(b.dataset.add); });
+    document.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => removeStock(b.dataset.rm); });
+    document.querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => exportData(b.dataset.dl); });
+    const q = $('q');
+    if (q) q.oninput = () => { query = q.value; $('pick').innerHTML = pickList(new Set(st ? st.cfg.tickers : setupPicks)); bindPick(); };
+    bindPick();
+    on('addCustom', addCustom);
+    on('s_go', () => {
       const num = (id, d) => { const v = parseFloat($(id).value); return Number.isFinite(v) && v >= 0 ? v : d; };
-      const cfg = { tickers: [...new Set(tickers)].slice(0, 25), capital: num('s_c', 500000), warmYears: Math.min(Math.round(num('s_w', 2)), 8),
+      if (!setupPicks.size) return toast('Pick at least one stock');
+      const cfg = { tickers: [...setupPicks], capital: num('s_c', 500000) || 500000, warmYears: Math.min(Math.round(num('s_w', 2)), 8),
         stopAtr: num('s_s', 3), riskPct: num('s_r', 0), slippage: 0.05 };
-      if (!cfg.tickers.length) return toast('Add at least one stock');
-      if (st && !confirm('Start a new paper account? The current one will be deleted.')) return;
-      st = E.newState(cfg, todayIST()); store.save(st); tab = 'portfolio'; render(); update();
-    };
-    const del = $('s_del');
-    if (del) del.onclick = () => { if (confirm('Delete the paper account and everything the brain learned?')) { st = null; store.clear(); tab = 'settings'; render(); } };
+      st = E.newState(cfg, todayIST()); store.save(st); tab = 'home'; query = ''; render(); update();
+    });
+    on('s_del', () => { if (confirm('Delete the paper account and everything the brain learned? Download a backup first if you want to keep it.')) { st = null; store.clear(); setupPicks = new Set(DEFAULTS.tickers); render(); } });
     const rem = $('s_rem');
     if (rem) rem.onchange = () => { N.setReminder(rem.checked); toast(rem.checked ? 'Reminder on' : 'Reminder off'); };
   }
+  function bindPick() { document.querySelectorAll('#pick [data-add]').forEach((b) => { b.onclick = () => addStock(b.dataset.add); }); }
 
   function render() {
     document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
     $('tabs').style.display = st ? '' : 'none';
     $('updateBtn').style.display = st ? '' : 'none';
-    const v = !st ? viewSettings() : tab === 'portfolio' ? viewPortfolio() : tab === 'brain' ? viewBrain() : tab === 'journal' ? viewJournal() : viewSettings();
+    const v = !st ? viewSetup() : { home: viewHome, stocks: viewStocks, brain: viewBrain, journal: viewJournal, more: viewMore }[tab]();
     $('view').innerHTML = v + `<p class="note">Paper trading only – simulated, not investment advice. Past results don't predict the future. SEBI found 87.7% of individual F&amp;O traders lost money in FY26.</p>`;
-    if (!st || tab === 'settings') bindSettings();
-    setStatus();
+    bind(); setStatus();
   }
 
   document.querySelectorAll('#tabs a').forEach((a) => { a.onclick = () => { tab = a.dataset.tab; render(); window.scrollTo(0, 0); }; });
   $('updateBtn').onclick = update;
   render();
   if (st && (!st.lastFetch || Date.now() - st.lastFetch > 3600e3)) update();
+  setInterval(tickCountdowns, 1000);
   setInterval(setStatus, 60000);
 })();
