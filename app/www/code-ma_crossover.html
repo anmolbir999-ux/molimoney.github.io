@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ma_crossover.py</title><link rel="stylesheet" href="style.css"></head>
+<body><main><header><a class="back" href="code.html" aria-label="Back">←</a><span class="t">Code</span></header><h1>ma_crossover.py</h1><p class='sub'>11 lines · algo/ma_crossover.py</p><div class="hl"><pre><span></span><span class="sd">"""Original 50/200 SMA crossover entry point – now a shortcut to backtest.py.</span>
+
+<span class="sd">  python ma_crossover.py RELIANCE.NS HDFCBANK.NS   ==   python backtest.py RELIANCE.NS HDFCBANK.NS -s sma_cross</span>
+<span class="sd">"""</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">backtest</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"-s"</span><span class="p">,</span> <span class="s2">"sma_cross"</span><span class="p">]</span>
+    <span class="n">backtest</span><span class="o">.</span><span class="n">main</span><span class="p">()</span>
+</pre></div>
+<p class="note">Educational only, not investment advice. SEBI found 87.7% of individual F&O traders lost money in FY26.</p></main></body></html>

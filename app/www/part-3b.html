@@ -1,0 +1,341 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>The giant firms</title><link rel="stylesheet" href="style.css"></head>
+<body><main><header><a class="back" href="index.html" aria-label="Back">←</a><span class="t">Part 3B</span></header><h1>Part 3B: How the Giant Firms Use Their Strategies</h1>
+<blockquote>
+<p>Figures are approximate and change every quarter. Check each firm's latest reports.
+Not investment advice. SEBI: <strong>87.7% of individual F&amp;O traders lost money in FY26.</strong></p>
+</blockquote>
+<hr />
+<h2>1. Active vs passive: the foundation</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Passive</th>
+<th>Active</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Goal</td>
+<td><strong>Match</strong> an index</td>
+<td><strong>Beat</strong> an index</td>
+</tr>
+<tr>
+<td>How</td>
+<td>Hold every stock in index weight</td>
+<td>Pick stocks / time the market</td>
+</tr>
+<tr>
+<td>Cost (India)</td>
+<td>Index fund/ETF: ~0.05–0.3% a year</td>
+<td>Active fund: ~0.5–1% (direct) to ~1.5–2% (regular)</td>
+</tr>
+<tr>
+<td>Turnover</td>
+<td>Very low</td>
+<td>Higher (more costs, more tax)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why most active funds fail to beat the index:</strong>
+1. <strong>Arithmetic (William Sharpe):</strong> before costs, all investors together <em>are</em> the market. So the average active rupee earns the market return. <strong>After costs, the average active rupee must lose to passive.</strong>
+2. <strong>Costs compound:</strong> 1.5% a year over 20 years eats about 25% of your final wealth.
+3. <strong>Competition:</strong> in large caps you are trading against FIIs, quant funds and analysts who all see the same information.
+4. <strong>Persistence is weak:</strong> last 5 years' top funds are rarely next 5 years' top funds.
+5. <strong>Closet indexing:</strong> many "active" large-cap funds hug the index but charge active fees.</p>
+<p><strong>Evidence:</strong> S&amp;P's SPIVA India scorecards repeatedly show <strong>most Indian large-cap active funds
+underperform their benchmark over 5–10 years</strong> (often 70–90%, varying by year). Mid/small-cap
+funds have done better at times: less efficient markets leave more room for skill.</p>
+<p><strong>Takeaway:</strong> for core long-term money, a low-cost Nifty 50 / Nifty 500 index fund is very hard to beat.</p>
+<hr />
+<h2>2. The firms</h2>
+<h3>BlackRock: the world's largest asset manager (~$13+ trillion)</h3>
+<ul>
+<li><strong>Core business:</strong> <strong>iShares ETFs</strong> (passive index tracking), index mutual funds, active funds, plus <strong>factor ETFs</strong> (momentum, quality, value, min-volatility).</li>
+<li><strong>How it makes money:</strong> <strong>fees on assets</strong> (basis points × trillions) + <strong>Aladdin</strong> technology licensing. It doesn't need to beat the market. It needs assets to grow.</li>
+<li><strong>Aladdin:</strong> a risk &amp; portfolio platform used by BlackRock and many other institutions (by many estimates, tens of trillions of dollars run through it). It models how portfolios react to rates, oil, currencies and crises: <em>stress tests</em>, <em>factor exposures</em>, <em>VaR</em>, trade processing.</li>
+<li><strong>Data/tech:</strong> index data, risk models, massive operations scale.</li>
+<li><strong>Retail lesson:</strong> ✅ cheap diversified index investing; ✅ think in <strong>risk exposures</strong>, not just stocks (<code>portfolio_risk.py</code> does a mini version: risk contributions, VaR). ❌ You can't get its fee economics or scale.</li>
+</ul>
+<h3>Vanguard: low-cost index funds (~$10+ trillion)</h3>
+<ul>
+<li><strong>Core strategy:</strong> passive index funds, pioneered by John Bogle (first retail index fund, 1976).</li>
+<li><strong>How it makes money:</strong> it is <strong>owned by its own funds</strong> (and so by its investors), so profits go back as <strong>lower fees</strong>. That's why its fees are among the lowest.</li>
+<li><strong>The case for passive (Bogle):</strong> costs matter most, the average active manager can't win after costs, so own the whole market cheaply and hold forever.</li>
+<li><strong>Retail lesson:</strong> ✅ fully copyable. In India: Nifty 50/Nifty Next 50/Nifty 500 index funds, monthly SIP, rebalance yearly. The hard part is <strong>behaviour</strong> (not selling in crashes), not access.</li>
+</ul>
+<h3>Renaissance Technologies: Medallion Fund</h3>
+<ul>
+<li><strong>Core strategy:</strong> purely quantitative. Thousands of small, <strong>short-term statistical patterns</strong> across futures, currencies and stocks, mostly held for hours to days. Founded by mathematician Jim Simons; staff are mathematicians, physicists and computer scientists, not finance MBAs.</li>
+<li><strong>Record:</strong> reportedly about <strong>66% a year gross / ~39% net</strong> of its very high fees, 1988–2018 (Zuckerman, <em>The Man Who Solved the Market</em>). Closed to outsiders: only employees invest.</li>
+<li><strong>How:</strong> huge, cleaned historical datasets; a single unified model; <strong>win only ~50.75% of trades</strong>, but across millions of trades, with leverage and tight cost control.</li>
+<li><strong>Key insight:</strong> <strong>capacity</strong>. Medallion is kept small (~$10bn) because its edge disappears if it gets too big. Its public funds (RIEF etc.) performed far more ordinarily.</li>
+<li><strong>Retail lesson:</strong> ✅ small edges × many trades × strict risk control; ✅ data cleaning matters (you just saw yfinance glitches). ❌ Can't copy: decades of proprietary data, hundreds of PhDs, execution infrastructure, financing.</li>
+</ul>
+<h3>Citadel (hedge fund) and Citadel Securities (market maker)</h3>
+<ul>
+<li><strong>Two separate firms:</strong></li>
+<li><strong>Citadel LLC:</strong> <strong>multi-strategy</strong> hedge fund. Many independent "pods" (equities long/short, fixed income, commodities, credit, quant). Each pod has <strong>strict drawdown limits</strong>; break them and you're cut.</li>
+<li><strong>Citadel Securities:</strong> one of the world's largest <strong>market makers</strong>. It handles a large share of US retail stock orders (via payment for order flow) and quotes ETFs, options and treasuries.</li>
+<li><strong>How they make money:</strong> the fund makes <strong>diversified, uncorrelated returns</strong> from many strategies. The market maker earns <strong>bid-ask spreads on enormous volume</strong> while managing inventory risk.</li>
+<li><strong>Data/tech:</strong> real-time risk across all pods, low-latency infrastructure, huge order-flow data.</li>
+<li><strong>Retail lesson:</strong> ✅ <strong>pod discipline</strong>: set a max drawdown per strategy and <em>actually stop</em> (your <code>KILL_SWITCH</code>). ✅ Diversify across uncorrelated strategies. ❌ Can't compete in market making (Part 3.4).</li>
+</ul>
+<h3>Two Sigma and D. E. Shaw: data science &amp; ML-driven</h3>
+<ul>
+<li><strong>Two Sigma:</strong> treats investing as a <strong>data science problem</strong>: ML on vast structured &amp; alternative data, large-scale computing, scientific research culture.</li>
+<li><strong>D. E. Shaw:</strong> one of the earliest computational quant firms (1988). Mixes quant strategies with discretionary/fundamental ones. Historically strong in stat-arb.</li>
+<li><strong>How they make money:</strong> combining many weak predictive signals into diversified, often market-neutral portfolios; strict research process (Part 3.8).</li>
+<li><strong>Retail lesson:</strong> ✅ the <strong>research discipline</strong>: hypothesis first, out-of-sample testing, kill bad ideas. ✅ Python/pandas/ML skills (you're building them). ❌ Their data budgets and compute.</li>
+</ul>
+<h3>Bridgewater Associates: global macro &amp; risk parity</h3>
+<ul>
+<li><strong>Core strategies:</strong></li>
+<li><strong>Pure Alpha:</strong> discretionary/systematic <strong>global macro</strong>. Bets on rates, currencies, commodities, equities based on economic "machine" models (growth, inflation, debt cycles).</li>
+<li><strong>All Weather</strong> (1996): <strong>risk parity</strong>. The economy has four "seasons" (growth ↑/↓, inflation ↑/↓). Hold assets that do well in each, sized so that <strong>each contributes equal risk</strong>. Bonds are less volatile, so they get more capital (and in Bridgewater's version, leverage).</li>
+<li><strong>Retail lesson:</strong> ✅ <strong>diversify by risk, not by rupees.</strong> Run <code>python portfolio_risk.py</code>: an equal-rupee portfolio of Nifty, Nifty Next 50, Nasdaq 100, gold and gilts gets ~75% of its risk from equity-like assets, while risk parity spreads it evenly. In the 2019–2026 test, risk parity had the <strong>lowest drawdown (−7% vs −17% for the Nifty)</strong> but a lower return (13% vs 17%), because it is unlevered. ❌ Leveraging bonds like Bridgewater needs institutional financing. ⚠️ Risk parity suffered in 2022 when <strong>stocks and bonds fell together</strong>: correlations aren't constant.</li>
+</ul>
+<h3>Jane Street: ETF &amp; options market making, arbitrage</h3>
+<ul>
+<li><strong>Core strategy:</strong> quantitative <strong>liquidity provision &amp; arbitrage</strong>: quoting ETFs (keeping ETF price ≈ its holdings' value), options, bonds. Famous for OCaml-based tech and probabilistic-thinking culture.</li>
+<li><strong>How:</strong> tiny spreads on huge volume + <strong>ETF creation/redemption arbitrage</strong> + options pricing/hedging.</li>
+<li><strong>India:</strong> a very large player in <strong>index options</strong>. In <strong>July 2025 SEBI issued an interim order</strong> alleging Jane Street manipulated Bank Nifty/Nifty around expiry days (buying index stocks/futures in the morning while holding much bigger options positions that benefited, then reversing). SEBI impounded about ₹4,844 crore. Jane Street disputed the allegations. Check the case's current status.</li>
+<li><strong>Retail lesson:</strong> ✅ understand <strong>who is on the other side</strong> of your options trade: often a firm like this with better models, speed and capital. ✅ This is a big part of <em>why</em> ~9 in 10 retail F&amp;O traders lose. ❌ Can't copy.</li>
+</ul>
+<h3>Indian context: who actually moves the Nifty</h3>
+<table>
+<thead>
+<tr>
+<th>Player</th>
+<th>How they trade</th>
+<th>Influence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>FIIs/FPIs</strong> (global funds, sovereign funds, hedge funds)</td>
+<td>Large-cap, liquid stocks; flows driven by <strong>USD/INR, US rates, EM allocation, MSCI weights</strong>; also big in index futures</td>
+<td>Short/medium-term swing factor. Heavy FII selling (e.g. Oct 2024–early 2025) drags the Nifty for months</td>
+</tr>
+<tr>
+<td><strong>Domestic mutual funds</strong> (SBI MF, HDFC MF, ICICI Pru, etc.)</td>
+<td>Deploy <strong>SIP inflows</strong> steadily; active stock-picking + growing passive/ETF assets (SBI MF manages very large Nifty ETFs, incl. EPFO money)</td>
+<td>A structural "floor": DIIs repeatedly absorbed FII selling. DII ownership of NSE-listed companies overtook FII ownership in 2025</td>
+</tr>
+<tr>
+<td><strong>Insurers, LIC, EPFO</strong></td>
+<td>Long-term; LIC is a large contrarian buyer in falls; EPFO invests via ETFs</td>
+<td>Stabilising</td>
+</tr>
+<tr>
+<td><strong>Prop desks / HFTs</strong> (domestic &amp; foreign)</td>
+<td>Market making, arbitrage (cash-futures, ETF), index options, algo strategies</td>
+<td>Dominate <strong>derivatives volume</strong>; drive intraday and expiry-day moves</td>
+</tr>
+<tr>
+<td><strong>Index funds/ETFs</strong></td>
+<td>Mechanical buying/selling at <strong>index rebalancing</strong></td>
+<td>Big one-day flows into additions/deletions</td>
+</tr>
+</tbody>
+</table>
+<p><strong>How they influence the Nifty:</strong> concentrated <strong>flows into heavyweights</strong> (HDFC Bank, ICICI, Reliance = ~30% of the index), <strong>derivatives positioning</strong> (option writers defend round-number strikes near expiry), and <strong>execution algorithms</strong> spreading big orders over the day.</p>
+<hr />
+<h2>3. Alternative data</h2>
+<p>Data that isn't price, volume or financial statements:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Example</th>
+<th>What it predicts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Satellite images</strong></td>
+<td>Cars in mall parking lots, oil tank shadows, crop health, factory activity</td>
+<td>Retail sales, oil inventories, harvests, before official data</td>
+</tr>
+<tr>
+<td><strong>Card/transaction data</strong></td>
+<td>Anonymised credit/UPI spending panels</td>
+<td>Company revenue before results</td>
+</tr>
+<tr>
+<td><strong>Web traffic &amp; app downloads</strong></td>
+<td>Visits to Zomato/Nykaa, app rankings</td>
+<td>User growth</td>
+</tr>
+<tr>
+<td><strong>Sentiment / NLP</strong></td>
+<td>News, earnings-call transcripts, social media tone</td>
+<td>Short-term moves, surprises</td>
+</tr>
+<tr>
+<td><strong>Shipping &amp; supply chain</strong></td>
+<td>Vessel tracking (AIS), port data, e-way bills</td>
+<td>Trade, commodities</td>
+</tr>
+<tr>
+<td><strong>Job postings</strong></td>
+<td>Hiring trends</td>
+<td>Growth plans, distress</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reality:</strong> expensive (lakhs to crores per dataset), messy, legally sensitive (privacy, insider-information rules), and edges <strong>decay quickly</strong> once many funds buy the same data.
+<strong>Free retail versions:</strong> Google Trends, monthly auto sales, GST collections, NSE delivery %, FII/DII data (your <code>checklist.py</code>), company websites, earnings-call transcripts.</p>
+<hr />
+<h2>4. Portfolio construction &amp; risk management</h2>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>What institutions do</th>
+<th>Retail version (your toolkit)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Diversification</strong></td>
+<td>Across assets, regions, strategies, factors; by <strong>risk</strong> not rupees</td>
+<td><code>portfolio_risk.py</code>: correlations, risk contributions, risk parity</td>
+</tr>
+<tr>
+<td><strong>Position sizing</strong></td>
+<td>Volatility targeting; risk budget per position/pod</td>
+<td><code>backtest.py --stop-atr 3 --risk-pct 1</code> (risk 1% of capital per trade)</td>
+</tr>
+<tr>
+<td><strong>Stop/drawdown limits</strong></td>
+<td>Pod drawdown limits (e.g. −5% → cut size, −10% → shut down)</td>
+<td>ATR stops, <code>KILL_SWITCH</code>, written rules before going live</td>
+</tr>
+<tr>
+<td><strong>Hedging</strong></td>
+<td>Index futures/options to remove market beta; currency hedges</td>
+<td><code>portfolio_risk.py</code> shows beta and the futures hedge, and why small accounts can't hedge precisely (one Nifty lot ≈ ₹15+ lakh)</td>
+</tr>
+<tr>
+<td><strong>Value-at-Risk</strong></td>
+<td>Daily VaR/CVaR + <strong>stress tests</strong> (2008, 2020, rate shocks)</td>
+<td>VaR/CVaR in ₹ in <code>metrics.py</code> &amp; <code>portfolio_risk.py</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>VaR's weakness:</strong> it says "95% of days you lose less than X," but says <strong>nothing about how bad the other 5% are</strong>. It assumes the past represents the future. In March 2020 the Nifty fell 13% in one day, far beyond normal VaR. Always look at <strong>CVaR</strong> and <strong>stress scenarios</strong> too.</p>
+<hr />
+<h2>5. Execution algorithms</h2>
+<p>When a fund must buy ₹500 crore of HDFC Bank, placing one order would push the price up (<strong>market impact</strong>) and alert everyone. So it slices the order:</p>
+<table>
+<thead>
+<tr>
+<th>Algo</th>
+<th>How</th>
+<th>Used when</th>
+<th>In your code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>TWAP</strong></td>
+<td>Equal slices at equal time intervals</td>
+<td>Steady, simple execution</td>
+<td><code>live_kite.py --exec twap --slices 5 --minutes 20</code></td>
+</tr>
+<tr>
+<td><strong>VWAP</strong></td>
+<td>Slices sized by the stock's typical <strong>intraday volume curve</strong> (heavier at open &amp; close) to match the day's VWAP</td>
+<td>Benchmark-driven funds</td>
+<td><code>--exec vwap</code> (U-shaped NSE profile: ~32% / 21% / 18% / 29%)</td>
+</tr>
+<tr>
+<td><strong>Iceberg</strong></td>
+<td>Show only a small "tip" in the order book; refill as it fills</td>
+<td>Hide size from other traders</td>
+<td><code>--exec iceberg</code> (Kite's ICEBERG variety)</td>
+</tr>
+<tr>
+<td><strong>POV</strong> (% of volume)</td>
+<td>Trade e.g. 10% of market volume as it happens</td>
+<td>Adaptive</td>
+<td>(not implemented)</td>
+</tr>
+<tr>
+<td><strong>Implementation shortfall</strong></td>
+<td>Balance impact cost vs risk of price drifting away</td>
+<td>Urgent orders</td>
+<td>(not implemented)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Retail reality:</strong> your orders are too small to move the market, so a simple limit order is usually fine. These algos matter once a single order is a meaningful fraction of a stock's volume.</p>
+<hr />
+<h2>6. Why their edge is hard to copy, and what still works</h2>
+<table>
+<thead>
+<tr>
+<th>Their edge</th>
+<th>Can you copy it?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Speed</strong> (co-location, microseconds)</td>
+<td>❌ Never. Avoid strategies where speed matters (scalping, HFT, expiry-day options)</td>
+</tr>
+<tr>
+<td><strong>Data</strong> (alt data, decades of tick data)</td>
+<td>❌ Mostly no. Free data is noisier (you saw yfinance glitches)</td>
+</tr>
+<tr>
+<td><strong>Capital &amp; leverage</strong> (cheap financing, risk parity leverage)</td>
+<td>❌ No</td>
+</tr>
+<tr>
+<td><strong>Cheap execution</strong> (near-zero fees, rebates)</td>
+<td>⚠️ Partly: free delivery brokerage, but STT/stamp/slippage still hurt high-turnover strategies</td>
+</tr>
+<tr>
+<td><strong>Talent &amp; research infrastructure</strong></td>
+<td>⚠️ Partly: you can learn the methods</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Your advantages as a small investor:</strong>
+1. <strong>Patience / long horizon:</strong> no quarterly reports, no client redemptions. You can hold through 3-year droughts funds can't survive.
+2. <strong>Small size:</strong> you can buy small/mid caps that big funds can't (capacity).
+3. <strong>No benchmark pressure:</strong> you don't have to own HDFC Bank just because it's 12% of the index.
+4. <strong>Low cost:</strong> index funds + delivery trades with no fund fees.</p>
+<p><strong>Ideas that still work for a small investor:</strong>
+- ✅ <strong>Low-cost index investing</strong> (Vanguard/BlackRock iShares idea): SIP into Nifty 50/500 index funds.
+- ✅ <strong>Factor ETFs</strong> (momentum, quality, low-vol, value) as a satellite to the core index holding.
+- ✅ <strong>Diversify by risk</strong> (Bridgewater idea): equity + gold + debt; rebalance yearly.
+- ✅ <strong>Simple, slow, rules-based strategies</strong> with low turnover, tested properly (Parts 3.8 &amp; 4).
+- ✅ <strong>Risk discipline</strong> (Citadel pod idea): position sizing, max drawdown rules, a kill switch.
+- ❌ Avoid competing on speed, F&amp;O expiry games, or anything where the other side is Jane Street.</p>
+<hr />
+<h2>🏋️ Exercises</h2>
+<pre><code class="language-bash">python portfolio_risk.py
+python portfolio_risk.py --assets NIFTYBEES.NS GOLDBEES.NS LTGILTBEES.NS
+python factor_portfolio.py --factor lowvol --years 10
+</code></pre>
+<ol>
+<li>In <code>portfolio_risk.py</code>, which asset dominates the risk of the equal-rupee portfolio? Why?</li>
+<li>Why did <code>min_var</code> put 100% in bonds, and why did it then do badly? (Hint: low volatility ≠ good return.)</li>
+<li>Pick one Indian large-cap active fund. Compare its 5- and 10-year returns (direct plan) with a Nifty 50 index fund. Did it beat the index after fees?</li>
+<li>Find NSE's FII/DII data for the last month. On days FIIs sold more than ₹3,000 crore, did DIIs buy? What happened to the Nifty?</li>
+</ol>
+<h2>✅ Check your understanding</h2>
+<ol>
+<li>Explain in two sentences why the average active fund <em>must</em> underperform the average passive fund after costs.</li>
+<li>BlackRock and Renaissance are both "quant" in some sense. How do they make money differently?</li>
+<li>Why does Medallion stay small? What does that tell you about any strategy that "works"?</li>
+<li>A ₹1 lakh portfolio is 50% Nifty ETF, 50% gilt ETF. Is it 50/50 in risk? Explain.</li>
+<li>Your VaR95 is ₹1,400 on ₹1 lakh. What does that mean, and what does it NOT tell you?</li>
+<li>Why would a fund buying ₹500 crore of a stock use VWAP instead of a single market order?</li>
+<li>List two edges you cannot copy and two advantages you have that big funds don't.</li>
+</ol><div class="nav"><a href="part-3.html">← Quant strategies</a><a href="part-4.html">Your first algorithm →</a></div><p class="note">Educational only, not investment advice. SEBI found 87.7% of individual F&O traders lost money in FY26.</p></main></body></html>

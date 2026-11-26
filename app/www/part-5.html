@@ -1,0 +1,230 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Books</title><link rel="stylesheet" href="style.css"></head>
+<body><main><header><a class="back" href="index.html" aria-label="Back">←</a><span class="t">Part 5</span></header><h1>Part 5: Books to Read Alongside</h1>
+<p>Read in this order. Each summary gives the key lessons, how it connects to this course
+and your code, and one thing to <em>do</em> after reading it.</p>
+<blockquote>
+<p>Not investment advice. Reading makes you informed, not profitable. SEBI found <strong>87.7% of
+individual F&amp;O traders lost money in FY26</strong>; most of them had read some of these books too.</p>
+</blockquote>
+<hr />
+<h2>1. <em>Technical Analysis of the Financial Markets</em>: John J. Murphy</h2>
+<p><strong>The textbook of technical analysis. Start here.</strong></p>
+<p>Key lessons:
+1. <strong>Three premises:</strong> price discounts everything, prices move in trends, history tends to repeat (because human behaviour does).
+2. <strong>Dow Theory:</strong> primary, secondary and minor trends; trends need <strong>confirmation</strong> (by volume and related indices); a trend is in force until clearly reversed.
+3. <strong>Trend basics:</strong> higher highs/higher lows; support and resistance, and their <strong>role reversal</strong>; trendlines and channels; the importance of round numbers.
+4. <strong>Volume (and open interest)</strong> confirm price: rising price on rising volume is healthy.
+5. <strong>Patterns:</strong> reversal (head &amp; shoulders, double tops/bottoms) vs continuation (triangles, flags), with <strong>measured targets</strong>.
+6. <strong>Moving averages and oscillators:</strong> MAs for trending markets, oscillators (RSI, stochastics, MACD) for ranges; <strong>divergences</strong> as warnings.
+7. <strong>Use multiple timeframes:</strong> weekly/monthly charts for direction, daily for timing.
+8. <strong>Intermarket analysis:</strong> bonds, commodities, currencies and stocks influence each other (Part 1's crude/USD-INR/Fed links).
+9. <strong>His "ten laws":</strong> map the trend, trade with it, find support/resistance, know how far to expect a pullback, draw trendlines, follow MAs, learn the turns, know the warning signs, trend is confirmed by volume.</p>
+<p><strong>Connects to:</strong> Part 2 entirely. <code>chart.py</code>, <code>indicators.py</code>, <code>patterns.py</code>.
+<strong>Do after:</strong> pick 5 Nifty stocks and label trend, S/R and one pattern on weekly <em>and</em> daily charts.</p>
+<hr />
+<h2>2. <em>Technical Analysis Explained</em>: Martin J. Pring</h2>
+<p><strong>Deeper on trends, cycles and momentum.</strong></p>
+<p>Key lessons:
+1. <strong>Weight of the evidence:</strong> never act on one indicator; look for several independent signals agreeing.
+2. <strong>The market cycle model:</strong> markets move through primary trends tied to the <strong>business cycle</strong>. Pring's six "stages" describe how <strong>bonds turn first, then stocks, then commodities</strong>, as the economy moves from recession to recovery to overheating.
+3. <strong>Momentum principles:</strong> momentum usually <strong>peaks before price</strong>. Divergences, overbought/oversold readings and momentum trendline breaks give early warnings.
+4. <strong>Relative strength</strong> (stock vs index, sector vs market) to find leaders: the basis of momentum investing.
+5. <strong>Pring's KST ("Know Sure Thing")</strong>: a smoothed, multi-timeframe momentum indicator combining several rates of change.
+6. <strong>Sentiment and breadth:</strong> advance/decline lines, new highs/lows, and how crowds behave at extremes.
+7. <strong>Long-term perspective:</strong> understanding where you are in the bigger cycle beats short-term signal hunting.</p>
+<p><strong>Connects to:</strong> Part 1 (macro → markets), Part 2 (momentum indicators), Part 3 (momentum factor).
+<strong>Do after:</strong> add a relative-strength line (stock ÷ Nifty) to <code>chart.py</code>. Which Nifty sectors are leading right now?</p>
+<hr />
+<h2>3. <em>Technical Analysis of the Indian Stock Markets</em>: Shriram Nerlekar</h2>
+<p><strong>Applying the same tools to Indian stocks.</strong></p>
+<blockquote>
+<p>⚠️ I'm less certain of this book's exact contents than of the others. These are the lessons
+it's generally used for. Check them against the copy you read.</p>
+</blockquote>
+<p>Key lessons:
+1. The standard toolkit (trends, patterns, indicators) <strong>illustrated on Indian stocks and indices</strong> (Sensex/Nifty), so you see the methods on charts you recognise.
+2. <strong>Indian market specifics</strong> that affect charts: trading sessions, circuit limits, corporate actions (bonus/split adjustments), liquidity differences between large and small caps.
+3. <strong>Practical discipline:</strong> combine indicators, use stop-losses, avoid illiquid stocks where patterns are unreliable.</p>
+<p><strong>Connects to:</strong> Part 2 applied to NSE stocks.
+<strong>Do after:</strong> find two examples in the book, then pull the same stocks today with <code>chart.py</code> and see how those setups look now.</p>
+<hr />
+<h2>4. <em>How to Make Money Trading with Charts</em>: Ashwani Gujral</h2>
+<p><strong>A practical trading book by an Indian trader, focused on setups and risk.</strong></p>
+<p>Key lessons:
+1. <strong>Keep it simple:</strong> a few setups you know deeply beat dozens of indicators.
+2. <strong>Trade with the trend:</strong> identify the trend first, then look for <strong>pullback entries</strong> (e.g. near a rising moving average or support) rather than chasing breakouts.
+3. <strong>Breakouts need confirmation:</strong> volume and the broader market's direction.
+4. <strong>The stop-loss is decided before entry</strong>, at a level that proves the trade wrong, and <strong>position size comes from the stop</strong> (exactly your <code>--risk-pct</code>).
+5. <strong>Risk-reward:</strong> take trades only where the potential reward is a multiple of the risk.
+6. <strong>Psychology:</strong> most losses come from breaking your own rules: averaging down, moving stops, overtrading after a loss.
+7. <strong>Indian market context:</strong> applies all this to NSE stocks and index charts.</p>
+<p><strong>Connects to:</strong> Parts 2 &amp; 4; <code>engine.py</code> stop/position sizing.
+<strong>Do after:</strong> write your own one-page trading plan: setup, entry, stop, target, max risk per trade (≤1%), max trades per week.</p>
+<hr />
+<h2>5. <em>Options as a Strategic Investment</em>: Lawrence G. McMillan</h2>
+<p><strong>The options reference book. Read it to understand risk, not to start trading F&amp;O.</strong></p>
+<p>Key lessons:
+1. <strong>What options are:</strong> the right (not obligation) to buy/sell; intrinsic vs time value; why <strong>most options expire worthless</strong> and time decay works against buyers.
+2. <strong>Pricing &amp; the Greeks:</strong> the Black-Scholes model; delta, gamma, theta, vega; <strong>implied volatility (IV)</strong> is the key variable. Buying options when IV is high is expensive.
+3. <strong>Strategies by objective:</strong> covered calls, protective puts, spreads (bull/bear, calendar), straddles/strangles, ratio spreads. Each has a defined <strong>payoff diagram</strong> and risk profile.
+4. <strong>Selling options</strong> earns small, frequent profits but carries <strong>large tail risk</strong> (selling naked options can lose many times the premium in one move).
+5. <strong>Volatility trading:</strong> strategies that bet on volatility rather than direction.
+6. <strong>Follow-up action:</strong> plan in advance what you'll do if the stock moves against you.
+7. <strong>Options as hedges:</strong> protective puts are insurance for a portfolio.</p>
+<p><strong>India-specific warning:</strong> most retail F&amp;O activity is buying cheap weekly index options near expiry, which fights theta, high IV and professional sellers (Part 3B: Jane Street). SEBI's studies show ~9 in 10 individual F&amp;O traders lose money.
+<strong>Connects to:</strong> Part 3B (who is on the other side); <code>SEBI_RULES.md</code>.
+<strong>Do after:</strong> paper-trade only. Draw payoff diagrams for a covered call and a protective put on a Nifty stock. <strong>No real F&amp;O money</strong> until you've studied this book fully and can explain each Greek.</p>
+<hr />
+<h2>6. <em>Quantitative Trading</em>: Ernest P. Chan</h2>
+<p><strong>How an individual can run a quant trading business. The book closest to your code.</strong></p>
+<p>Key lessons:
+1. <strong>Retail can do quant</strong>, if they pick strategies big funds ignore (small capacity, niche markets) and stay disciplined.
+2. <strong>Finding ideas:</strong> academic papers, blogs, books. Then judge them <strong>before</strong> backtesting: does it make economic sense? Is the Sharpe realistic? Can it survive costs?
+3. <strong>Backtesting pitfalls:</strong> look-ahead bias, <strong>survivorship bias</strong>, data-snooping / overfitting, ignoring transaction costs, using bad data. (You met all of these in Parts 3–4.)
+4. <strong>Sharpe ratio thinking:</strong> aim for strategies with a consistently positive, realistic Sharpe, and be suspicious of very high ones.
+5. <strong>Mean reversion and pairs trading</strong>, with cointegration tests (your <code>pairs.py</code>).
+6. <strong>Position sizing with the Kelly criterion:</strong> optimal leverage ≈ mean excess return ÷ variance. In practice use <strong>half-Kelly or less</strong>, because estimates are noisy.
+7. <strong>Regime change:</strong> strategies stop working. Monitor live performance and have rules for turning a strategy off.
+8. <strong>Execution systems:</strong> automate carefully, paper trade first, reconcile live results with the backtest.</p>
+<p><strong>Connects to:</strong> Parts 3 &amp; 4; <code>backtest.py</code>, <code>pairs.py</code>, <code>paper_trade.py</code>, <code>live_kite.py</code>.
+<strong>Do after:</strong> add a Kelly-fraction calculator to <code>metrics.py</code> (mean daily excess return ÷ variance) and compare it with the position sizes you've been using.</p>
+<hr />
+<h2>7. <em>The Psychology of Money</em>: Morgan Housel</h2>
+<p><strong>Why behaviour matters more than intelligence. The most important book on this list.</strong></p>
+<p>Key lessons:
+1. <strong>No one's crazy:</strong> people's money decisions come from their own experiences (someone who lived through 2008 or COVID invests differently).
+2. <strong>Luck and risk</strong> are siblings. Don't copy outcomes; judge decisions.
+3. <strong>"Enough":</strong> the hardest skill is stopping the goalposts from moving. Never risk what you have and need for what you don't have and don't need.
+4. <strong>Compounding:</strong> most of Warren Buffett's wealth came after age 65. <strong>Time in the market</strong> is the superpower. At 19, you have it.
+5. <strong>Getting wealthy vs staying wealthy:</strong> staying wealthy requires survival: frugality, paranoia, avoiding ruin.
+6. <strong>Tails drive everything:</strong> a few big winners produce most of the returns (in stocks, companies and careers).
+7. <strong>Freedom:</strong> the highest dividend money pays is control over your time.
+8. <strong>Wealth is what you don't see:</strong> it's money not spent.
+9. <strong>Save</strong>, even without a specific goal: savings create room for error.
+10. <strong>Reasonable &gt; rational:</strong> a strategy you'll actually stick with beats a "perfect" one you'll abandon.
+11. <strong>Volatility is the fee, not a fine:</strong> the price you pay for equity returns.
+12. <strong>You're playing your own game:</strong> don't take cues from people with different time horizons (day traders vs long-term investors).
+13. <strong>Leave room for error</strong> and expect surprises.</p>
+<p><strong>Connects to:</strong> everything. The checklist, the kill switch, "most F&amp;O traders lose".
+<strong>Do after:</strong> write down your personal "enough" and your rules for what money you will <strong>never</strong> trade with.</p>
+<hr />
+<h2>8. <em>One Up on Wall Street</em>: Peter Lynch</h2>
+<p><strong>Fundamental stock picking by one of the most successful fund managers ever (Fidelity Magellan, 1977–1990).</strong></p>
+<p>Key lessons:
+1. <strong>Invest in what you know:</strong> everyday observations (products you use, shops that are always busy) can lead to ideas before Wall Street notices. That's <strong>only a starting point; then do the research.</strong>
+2. <strong>Six stock categories</strong>, each with different expectations:
+   - <strong>Slow growers</strong> (mature, dividends)
+   - <strong>Stalwarts</strong> (large, steady ~10–12% growth, e.g. HUL, ITC types)
+   - <strong>Fast growers</strong> (small, aggressive, where tenbaggers come from)
+   - <strong>Cyclicals</strong> (autos, metals: timing matters; low P/E can mean a peak)
+   - <strong>Turnarounds</strong> (recovering from trouble)
+   - <strong>Asset plays</strong> (hidden value in land, cash or subsidiaries)
+3. <strong>The two-minute drill:</strong> be able to explain why you own a stock, and what must happen for it to succeed, in two minutes.
+4. <strong>Key numbers:</strong> earnings growth, <strong>P/E vs growth (PEG)</strong>, debt, cash, inventories, dividends, insider buying, buybacks.
+5. <strong>Perfect-stock traits:</strong> boring name or business, out of favour, spinoffs, niche, low institutional ownership, people need to keep buying it.
+6. <strong>Avoid:</strong> the hottest stock in the hottest industry, "the next X", diversification into unrelated businesses ("diworsification"), and stocks driven only by whispers.
+7. <strong>Don't try to time the market or predict the economy.</strong> Focus on companies; stay invested; expect declines.
+8. <strong>Tenbaggers</strong> (10× stocks) need time and patience. Most of the gain comes from holding winners.</p>
+<p><strong>Connects to:</strong> Part 1 (corporate earnings), Part 3 (value/quality factors), the "small investor advantages" in Part 3B.
+<strong>Do after:</strong> pick one company you use daily (e.g. a listed retailer, bank or consumer brand). Classify it into one of the six categories and do the two-minute drill using its latest annual report.</p>
+<hr />
+<h2>Free companion: Zerodha Varsity</h2>
+<p><strong>varsity.zerodha.com</strong> (also an app). Free, India-specific, beginner-friendly modules with quizzes.
+Module names may change; map them roughly like this:</p>
+<table>
+<thead>
+<tr>
+<th>Varsity module</th>
+<th>Pair with</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Introduction to Stock Markets</td>
+<td>Part 1</td>
+</tr>
+<tr>
+<td>Technical Analysis</td>
+<td>Murphy, Pring, Nerlekar, Gujral (Part 2)</td>
+</tr>
+<tr>
+<td>Fundamental Analysis</td>
+<td>Lynch</td>
+</tr>
+<tr>
+<td>Futures Trading, Options Theory, Option Strategies</td>
+<td>McMillan (understand before risking money)</td>
+</tr>
+<tr>
+<td>Markets and Taxation</td>
+<td><code>SEBI_RULES.md</code> tax section</td>
+</tr>
+<tr>
+<td>Risk Management &amp; Trading Psychology</td>
+<td>Gujral, Housel</td>
+</tr>
+<tr>
+<td>Trading Systems</td>
+<td>Chan, your <code>algo/</code> toolkit (Parts 3–4)</td>
+</tr>
+<tr>
+<td>Personal Finance</td>
+<td>Housel</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>Suggested reading plan (alongside college)</h2>
+<table>
+<thead>
+<tr>
+<th>Months</th>
+<th>Read</th>
+<th>Practise with</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1–2</td>
+<td>Murphy + Varsity Technical Analysis</td>
+<td><code>chart.py</code> exercises (Part 2)</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Pring</td>
+<td>Relative-strength line, sector leaders</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Nerlekar + Gujral</td>
+<td>Write your trading plan; <code>paper_trade.py</code></td>
+</tr>
+<tr>
+<td>5–6</td>
+<td>Housel (start anytime) + Lynch + Varsity Fundamental Analysis</td>
+<td>Two-minute drill on 5 companies</td>
+</tr>
+<tr>
+<td>7–8</td>
+<td>Chan + Varsity Trading Systems</td>
+<td><code>backtest.py</code>, out-of-sample tests, Kelly calculator</td>
+</tr>
+<tr>
+<td>9–10</td>
+<td>McMillan + Varsity Options</td>
+<td>Payoff diagrams, <strong>paper only</strong></td>
+</tr>
+</tbody>
+</table>
+<h2>✅ Check your understanding</h2>
+<ol>
+<li>What do Murphy's Dow Theory and Pring's "weight of the evidence" have in common?</li>
+<li>In Pring's cycle model, which usually turns first: bonds, stocks or commodities? Why?</li>
+<li>Using Gujral's rules: entry ₹500, stop ₹480, capital ₹2 lakh, risk 1%. How many shares?</li>
+<li>McMillan: why do most bought options expire worthless? Why is selling options not "free money"?</li>
+<li>Chan: name three backtesting biases and which file in your toolkit guards against each.</li>
+<li>Housel: what does "volatility is the fee, not a fine" mean for a SIP investor in a crash?</li>
+<li>Lynch: classify Reliance, TCS, Tata Steel and a loss-making startup into his six categories.</li>
+</ol><div class="nav"><a href="part-4.html">← Your first algorithm</a><span></span></div><p class="note">Educational only, not investment advice. SEBI found 87.7% of individual F&O traders lost money in FY26.</p></main></body></html>

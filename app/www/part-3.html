@@ -1,0 +1,229 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Quant strategies</title><link rel="stylesheet" href="style.css"></head>
+<body><main><header><a class="back" href="index.html" aria-label="Back">←</a><span class="t">Part 3</span></header><h1>Part 3: How Professional Firms Build Algorithms</h1>
+<blockquote>
+<p>Professionals with PhDs, huge data and microsecond execution still have losing years, and many
+quant funds close. SEBI found <strong>87.7% of individual F&amp;O traders lost money in FY26</strong>. This part
+is for understanding the game, not a promise you can win it.</p>
+</blockquote>
+<hr />
+<h2>3.0 The core idea: an "edge"</h2>
+<p>Every strategy bets that some <strong>repeatable pattern exists, survives costs, and isn't fully exploited</strong>. Professionals ask:</p>
+<ol>
+<li><strong>Why should this make money?</strong> Who is on the other side, and why are they willing to lose?
+   - <strong>Risk premium:</strong> paid for bearing a risk others avoid.
+   - <strong>Behavioural bias:</strong> people overreact or underreact.
+   - <strong>Structural constraint:</strong> someone is <em>forced</em> to trade (e.g. index funds at rebalancing).
+   - <strong>Service:</strong> paid for providing liquidity.</li>
+<li><strong>Is it statistically real</strong>, or luck/overfitting?</li>
+<li><strong>Does it survive costs and capacity</strong> (STT, slippage, impact, at your size)?</li>
+</ol>
+<p>If you can't answer question 1, a good backtest is usually luck.</p>
+<hr />
+<h2>3.1 Trend following / momentum</h2>
+<p><strong>Idea:</strong> rising prices tend to keep rising for a while; falling ones keep falling.</p>
+<ul>
+<li><strong>Why:</strong> investors <strong>underreact</strong> to news at first; then <strong>herding/FOMO</strong> extends moves; institutions build positions over weeks.</li>
+<li><strong>Two flavours:</strong></li>
+<li><strong>Time-series momentum (trend following):</strong> is <em>this</em> asset above its own past? (SMA crossover, Donchian breakout; CTA/managed-futures funds across 50–100 markets.)</li>
+<li><strong>Cross-sectional momentum:</strong> buy the strongest <em>relative</em> performers (<code>factor_portfolio.py --factor momentum</code>).</li>
+<li><strong>Return profile:</strong> <strong>many small losses, a few huge wins</strong>, win rate 30–45%. Best in long crises (2008, 2022 bonds); suffers in choppy markets. <strong>Momentum crashes</strong> in sharp reversals (e.g. after March 2020).</li>
+<li><strong>Why pros diversify it:</strong> one stock's trend signal is mostly noise; a portfolio of 50+ uncorrelated markets smooths it.</li>
+</ul>
+<h2>3.2 Mean reversion</h2>
+<p><strong>Idea:</strong> prices that move too far, too fast tend to snap back.</p>
+<ul>
+<li><strong>Why:</strong> short-term <strong>overreaction</strong>; <strong>liquidity provision</strong> (buying from a forced seller gets you paid).</li>
+<li><strong>Examples:</strong> RSI(2) dip-buying, Bollinger reversion, buying the biggest one-week losers in the Nifty 100.</li>
+<li><strong>Return profile:</strong> <strong>high win rate (60–75%), small wins, occasional large losses</strong> ("picking up coins in front of a steamroller": Yes Bank 2019–20, Adani stocks Jan 2023).</li>
+<li><strong>Horizon matters:</strong> days → mean reversion; 3–12 months → momentum; 3–5 years → mean reversion again.</li>
+<li><strong>Risk control:</strong> trend filter (only buy dips above the 200-day, as <code>rsi_reversion</code> does) plus a hard or time stop.</li>
+</ul>
+<h2>3.3 Statistical arbitrage and pairs trading</h2>
+<p><strong>Idea:</strong> find <strong>economically linked</strong> assets and bet that temporary gaps close.</p>
+<ul>
+<li><strong>Classic pair:</strong> HDFC Bank vs ICICI Bank, TCS vs Infosys. At spread z-score ±2, buy the cheap one, short the expensive one. <strong>Market-neutral</strong>: you only care whether the gap closes.</li>
+<li><strong>Professional stat-arb:</strong> hundreds of stocks; model returns with factors (market, sector, size, momentum); trade stretched <strong>residuals</strong>; thousands of small, short-lived positions.</li>
+<li><strong>Key concepts:</strong></li>
+<li><strong>Correlation ≠ cointegration.</strong> Correlated returns can drift apart forever; cointegrated prices have a spread pulled back to a mean (HDFC–ICICI test p = 0.047, borderline).</li>
+<li><strong>Regime breaks:</strong> the HDFC–HDFC Bank merger (July 2023) broke old pair models.</li>
+<li><strong>Indian retail problem:</strong> no overnight shorts in the cash market → you need <strong>stock futures</strong> (big lots, margin, rollover, F&amp;O risk). <code>pairs.py</code> returned ~0% over 10 years after costs.</li>
+</ul>
+<h2>3.4 Market making and HFT</h2>
+<p><strong>Idea:</strong> continuously quote both sides (bid ₹1,610.00 / ask ₹1,610.10) and <strong>earn the spread</strong> millions of times, keeping inventory near zero.</p>
+<ul>
+<li><strong>Money from:</strong> bid-ask spread, exchange rebates (some markets), short-term order-book prediction.</li>
+<li><strong>Main risk: adverse selection</strong> (getting filled by someone who knows more).</li>
+<li><strong>Requires:</strong> <strong>co-location</strong> in the NSE data centre, microsecond latency, FPGA hardware, direct feeds, huge message rates, exchange membership, crores a year in infrastructure.</li>
+<li><strong>Why retail can't compete:</strong></li>
+<li>Home → broker → exchange takes <strong>milliseconds to hundreds of ms</strong>; HFTs react in <strong>microseconds</strong> (1,000× faster).</li>
+<li>SEBI caps unregistered retail algos at <strong>10 orders/second</strong>; HFTs send thousands.</li>
+<li>In a speed race, retail is always the slowest, the one that gets "picked off."</li>
+<li><strong>India:</strong> prop/HFT firms are a large share of equity-derivatives volume. The Jane Street case (SEBI interim order, July 2025) shows regulators watch index-options behaviour closely (see Part 3B).</li>
+</ul>
+<h2>3.5 Factor investing</h2>
+<p><strong>Idea:</strong> stocks with certain <strong>characteristics</strong> have historically earned extra returns. Hold <strong>diversified baskets</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Factor</th>
+<th>Definition</th>
+<th>Why it might earn a premium</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Value</strong></td>
+<td>Cheap on P/E, P/B, EV/EBITDA</td>
+<td>Risk compensation + over-extrapolating bad news</td>
+</tr>
+<tr>
+<td><strong>Quality</strong></td>
+<td>High ROE, low debt, stable earnings</td>
+<td>Investors underpay for "boring" reliability</td>
+</tr>
+<tr>
+<td><strong>Momentum</strong></td>
+<td>Strong 12-month return, skipping the last month</td>
+<td>Underreaction and herding</td>
+</tr>
+<tr>
+<td><strong>Low volatility</strong></td>
+<td>Least volatile stocks</td>
+<td>Leverage-constrained investors chase "lottery" stocks</td>
+</tr>
+<tr>
+<td><strong>Size</strong></td>
+<td>Small caps</td>
+<td>Illiquidity/risk premium (weak recently)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>India:</strong> NSE has Nifty200 Momentum 30, Nifty Alpha Low-Volatility 30, Nifty200 Quality 30, Nifty200 Value 30, etc., with ETFs/index funds.</li>
+<li><strong>Reality:</strong> <strong>long droughts</strong> (value lagged globally ~2010–2020; momentum crashes). You must hold through 3–5 bad years.</li>
+<li><strong>The most realistic "quant" idea for a small investor:</strong> low turnover, low cost, diversified, available as an ETF.</li>
+</ul>
+<h2>3.6 Event-driven strategies</h2>
+<p><strong>Idea:</strong> trade predictable effects around <strong>known events</strong>.</p>
+<ul>
+<li><strong>Earnings:</strong> <strong>post-earnings announcement drift (PEAD)</strong>: big positive surprises tend to keep drifting up for weeks. (Options traders also trade the IV crush after results: F&amp;O, risky.)</li>
+<li><strong>Index rebalancing:</strong> Nifty 50 changes are announced weeks ahead (March/September reviews). Index funds <strong>must</strong> buy additions and sell deletions on the effective date. <strong>The edge has shrunk</strong>: everyone knows, and moves often happen before the announcement.</li>
+<li><strong>Others:</strong> buybacks, demergers (e.g. Tata Motors 2025), block deals, merger arbitrage, MSCI/FTSE inclusions (big FII flows).</li>
+<li><strong>Retail angle:</strong> relatively feasible (research and calendars, not speed), but edges are small and crowd quickly.</li>
+</ul>
+<h2>3.7 Machine learning and its pitfalls</h2>
+<p><strong>What firms do:</strong> gradient boosting, neural nets, NLP on news/earnings calls, transformers on order books, combining <strong>hundreds of weak signals</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>What it means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Low signal-to-noise</strong></td>
+<td>Daily returns are ~99% noise. 52% accuracy can be excellent; 70% is almost certainly broken.</td>
+</tr>
+<tr>
+<td><strong>Overfitting</strong></td>
+<td>Even with 2 parameters: in-sample Sharpe 0.57 → out-of-sample −0.16 (Reliance SMA optimisation).</td>
+</tr>
+<tr>
+<td><strong>Non-stationarity</strong></td>
+<td>Markets change (regulation, participants, rates, COVID).</td>
+</tr>
+<tr>
+<td><strong>Look-ahead bias</strong></td>
+<td>Using data not available at the time (revised GDP, results dated by period-end).</td>
+</tr>
+<tr>
+<td><strong>Data snooping</strong></td>
+<td>Test 1,000 random strategies → ~50 look "significant" at 5% by chance.</td>
+</tr>
+<tr>
+<td><strong>Survivorship bias</strong></td>
+<td>Testing today's stocks ignores the dead ones (equal-weight of today's 40 large caps: 20% a year).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Defences:</strong> strict out-of-sample and <strong>walk-forward</strong> testing; purged cross-validation; adjusting for the number of trials (deflated Sharpe); simple models with an economic rationale; ensembles of individually sensible signals.</p>
+<p><strong>For you:</strong> if a simple idea doesn't work, a neural network on the same data almost certainly won't either; it will just overfit more convincingly.</p>
+<hr />
+<h2>3.8 The research process</h2>
+<pre><code> 1. HYPOTHESIS ─► 2. DATA ─► 3. BACKTEST ─► 4. OUT-OF-SAMPLE ─► 5. RISK MGMT ─► 6. PAPER ─► 7. LIVE (small)
+      │                                          │                                    │            │
+      └──────────── most ideas die here ◄────────┴──── and here ◄─────────────────────┴── and here ┘
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Step</th>
+<th>Professionals</th>
+<th>Your toolkit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>1. Hypothesis</strong></td>
+<td>Write <em>why</em> it works and who loses, <strong>before</strong> looking at results</td>
+<td>A notebook</td>
+</tr>
+<tr>
+<td><strong>2. Data</strong></td>
+<td>Clean, point-in-time data; corporate actions; delisted stocks</td>
+<td><code>data.py</code> (yfinance; survivorship caveat)</td>
+</tr>
+<tr>
+<td><strong>3. Backtest</strong></td>
+<td>No look-ahead, realistic costs, slippage, capacity</td>
+<td><code>backtest.py</code></td>
+</tr>
+<tr>
+<td><strong>4. Out-of-sample</strong></td>
+<td>Hold back data you <strong>never</strong> touch; walk-forward; many markets</td>
+<td><code>--oos-split</code>, <code>--optimize</code>, multi-ticker</td>
+</tr>
+<tr>
+<td><strong>5. Risk management</strong></td>
+<td>Sizing, stops, diversification, drawdown limits</td>
+<td><code>--stop-atr</code>, <code>--risk-pct</code>, <code>--market-filter</code>, VaR</td>
+</tr>
+<tr>
+<td><strong>6. Paper trading</strong></td>
+<td>Months live without money; compare with backtest</td>
+<td><code>paper_trade.py</code></td>
+</tr>
+<tr>
+<td><strong>7. Live, small</strong></td>
+<td>5–10% of intended size; scale only if live matches; <strong>kill rule</strong> set in advance</td>
+<td><code>live_kite.py</code>, <code>--max-order-value</code>, <code>KILL_SWITCH</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mindset:</strong>
+- Most ideas die at steps 3–4. <strong>Killing bad ideas fast is a skill.</strong>
+- <strong>Be suspicious of great results.</strong> Sharpe &gt; 2 on daily data from a simple strategy almost always means a bug, look-ahead or overfitting.
+- <strong>Live is usually worse than the backtest</strong> (alpha decay + implementation shortfall). Plan for it.</p>
+<h3>🏋️ Exercises</h3>
+<ol>
+<li>Overfitting:
+   <code>bash
+   python backtest.py TCS.NS --oos-split 2021-01-01 --optimize "fast=10,20,30,50,75,100;slow=100,150,200,250,300" --no-plot</code>
+   Does the in-sample winner stay near the top out-of-sample? Is there a robust <em>region</em>?</li>
+<li>Robustness: run your best SMA settings across 10 Nifty stocks in one command.</li>
+<li>Factors: <code>python factor_portfolio.py --factor momentum --years 10</code> vs <code>--factor lowvol</code>. Compare drawdown and Sharpe; explain each with the "why" column.</li>
+<li>Write a hypothesis (no code) for Nifty 50 index additions: why prices move, who loses, data needed, how to avoid look-ahead.</li>
+</ol>
+<h2>✅ Check your understanding</h2>
+<ol>
+<li>Trend following wins ~40% of trades. How can it still be profitable?</li>
+<li>Why does mean reversion work over days but momentum over months? Give a behavioural reason for each.</li>
+<li>HDFC Bank and ICICI Bank have a return correlation of 0.51. Why isn't that enough for a pairs trade?</li>
+<li>Two specific reasons a Kite Connect retail trader can't compete in market making.</li>
+<li>Value underperformed for ~a decade. Does that prove it's dead? What would you need to see?</li>
+<li>A friend's ML model is 75% accurate on Nifty's daily direction. Three questions you'd ask.</li>
+<li>Why is paper trading still needed if the backtest already used out-of-sample data?</li>
+</ol><div class="nav"><a href="part-2.html">← Reading charts</a><a href="part-3b.html">The giant firms →</a></div><p class="note">Educational only, not investment advice. SEBI found 87.7% of individual F&O traders lost money in FY26.</p></main></body></html>

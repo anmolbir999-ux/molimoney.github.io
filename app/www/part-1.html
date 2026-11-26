@@ -1,0 +1,230 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>How the Nifty moves</title><link rel="stylesheet" href="style.css"></head>
+<body><main><header><a class="back" href="index.html" aria-label="Back">←</a><span class="t">Part 1</span></header><h1>Part 1: How the Nifty 50 Moves</h1>
+<blockquote>
+<p>Not investment advice. SEBI found <strong>87.7% of individual F&amp;O traders lost money in FY26</strong>
+(about 9 in 10 in FY22–FY25 too). Learn first; risk money last.</p>
+</blockquote>
+<hr />
+<h2>1.1 What the Nifty 50 is</h2>
+<ul>
+<li>An index of <strong>50 large, liquid NSE companies</strong> across ~13 sectors, run by NSE Indices Ltd.</li>
+<li>Base: 1995 = 1000. Reviewed <strong>twice a year</strong> (March and September), when stocks can be added or dropped.</li>
+<li>You can't buy "the Nifty" directly. You buy an <strong>index fund/ETF</strong> holding the same 50 stocks, or trade <strong>Nifty futures/options</strong> (F&amp;O, high risk).</li>
+</ul>
+<h2>1.2 How the weightage works: free-float market cap</h2>
+<pre><code>Free-float market cap = Share price × Total shares × Investable Weight Factor (IWF)
+Weight of stock i      = FF mcap of i / Sum of FF mcap of all 50
+</code></pre>
+<ul>
+<li><strong>IWF</strong> = the share of a company's stock the public can actually trade. Promoter and government holdings are excluded.</li>
+<li>Reliance: promoters own ~50%, so only ~50% of it counts.</li>
+<li>LIC: the government owns ~96%, so it has a huge total market cap but a tiny free float, and isn't in the Nifty.</li>
+<li>HDFC Bank: almost no promoter holding, so nearly 100% counts. That's a big reason it's the largest weight.</li>
+</ul>
+<p><strong>Heavyweights</strong> (approximate; check the current NSE factsheet, weights shift monthly):</p>
+<table>
+<thead>
+<tr>
+<th>Stock</th>
+<th>Approx. weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HDFC Bank</td>
+<td>~12–13%</td>
+</tr>
+<tr>
+<td>ICICI Bank</td>
+<td>~8–9%</td>
+</tr>
+<tr>
+<td>Reliance</td>
+<td>~8–9%</td>
+</tr>
+<tr>
+<td>Infosys, Bharti Airtel, L&amp;T, ITC, TCS</td>
+<td>~3–6% each</td>
+</tr>
+</tbody>
+</table>
+<p>The top 10 ≈ 55–60% of the index; <strong>financials ≈ one-third</strong>.</p>
+<p><strong>Quick maths:</strong>
+- HDFC Bank (13%) rises 2% → Nifty moves about 0.13 × 2% = <strong>0.26%</strong> → ≈ <strong>+65 points</strong> at Nifty 25,000.
+- A 0.5%-weight stock rising 2% → about 0.01% → 2–3 points.</p>
+<p>So "the market is up" often means "banks and Reliance are up." <strong>Learning to read Bank Nifty is half of reading the Nifty.</strong></p>
+<h2>1.3 What drives it and how to track each driver</h2>
+<p>Think of it as <strong>Price = Earnings × P/E multiple</strong>:
+- Earnings are driven by the economy and companies' results.
+- The P/E multiple is driven by interest rates, money flows and sentiment.</p>
+<h3>A. Macro (India)</h3>
+<table>
+<thead>
+<tr>
+<th>Factor</th>
+<th>Mechanism</th>
+<th>Where to track</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>RBI repo rate</strong></td>
+<td>Cuts → cheaper loans, higher valuations, good for banks/autos/real estate. Hikes → the opposite. The <em>surprise</em> matters more than the decision.</td>
+<td>RBI MPC meetings, ~6 a year (rbi.org.in)</td>
+</tr>
+<tr>
+<td><strong>CPI inflation</strong></td>
+<td>High CPI → the RBI can't cut. Target 4% ±2%.</td>
+<td>MoSPI, ~12th of each month</td>
+</tr>
+<tr>
+<td><strong>GDP growth</strong></td>
+<td>Drives long-run earnings, but is usually priced in early.</td>
+<td>MoSPI quarterly</td>
+</tr>
+<tr>
+<td><strong>Union Budget / fiscal deficit</strong></td>
+<td>Capex helps L&amp;T, cement, PSUs. Tax changes (STT, capital gains) hit sentiment directly. High deficit → more borrowing → higher bond yields → pressure on valuations.</td>
+<td>Feb 1 budget, CGA monthly data, <strong>10-yr G-Sec yield</strong></td>
+</tr>
+</tbody>
+</table>
+<h3>B. Global</h3>
+<table>
+<thead>
+<tr>
+<th>Factor</th>
+<th>Mechanism</th>
+<th>Where to track</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>US Fed rates</strong></td>
+<td>Higher US yields pull money out of emerging markets and weaken the rupee.</td>
+<td>FOMC meetings, US 10-yr yield</td>
+</tr>
+<tr>
+<td><strong>US markets</strong></td>
+<td>The overnight S&amp;P 500/Nasdaq move sets the opening mood. Nasdaq matters for Indian IT.</td>
+<td>S&amp;P futures, <strong>GIFT Nifty</strong></td>
+</tr>
+<tr>
+<td><strong>Crude oil</strong></td>
+<td>India imports ~85% of its oil. Expensive crude hurts the current account, rupee, inflation, OMCs, paints, aviation. Helps ONGC.</td>
+<td>Brent crude</td>
+</tr>
+<tr>
+<td><strong>USD/INR</strong></td>
+<td>A weak rupee hurts FII returns (they sell), helps IT/pharma exporters, hurts importers.</td>
+<td>RBI reference rate</td>
+</tr>
+<tr>
+<td><strong>Risk events</strong></td>
+<td>Wars, bank failures, trade wars → risk-off selling.</td>
+<td>News, US VIX, dollar index (DXY)</td>
+</tr>
+</tbody>
+</table>
+<h3>C. Money flows (very important for the Nifty)</h3>
+<ul>
+<li><strong>FII/FPI</strong> (foreign funds): often the short-term swing factor. Heavy selling can drag the market for months.</li>
+<li><strong>DII</strong> (domestic MFs, LIC, insurers): in recent years they have often absorbed FII selling.</li>
+<li><strong>SIP inflows:</strong> steady monthly mutual-fund money (recently well above ₹25,000 crore a month), a structural "floor" that didn't exist 10 years ago.</li>
+<li><strong>Track:</strong> NSE provisional FII/DII cash data every evening; NSDL (FPI); AMFI (monthly SIP); NSE participant-wise open interest (FII positions in index futures).</li>
+</ul>
+<h3>D. Corporate</h3>
+<ul>
+<li><strong>Quarterly results</strong> (Apr, Jul, Oct, Jan seasons). What matters is results <strong>vs expectations</strong>: a stock can fall on good results that were "less good than expected."</li>
+<li><strong>Guidance and management commentary</strong> often move a stock more than the numbers.</li>
+<li><strong>Sector news:</strong> RBI rules for banks, monthly auto sales, US tech spending for IT.</li>
+</ul>
+<h3>E. Sentiment</h3>
+<ul>
+<li><strong>India VIX</strong> ("fear index", from Nifty option prices) = expected volatility over 30 days.</li>
+<li>Roughly: 11–14 calm, 20+ fearful, 30+ panic (e.g. COVID 2020).</li>
+<li>VIX ÷ √12 ≈ expected 1-month move. VIX 16 → about ±4.6% in a month (1 standard deviation).</li>
+<li>VIX ÷ √252 ≈ expected 1-day move. VIX 16 → about ±1%.</li>
+<li><strong>Elections:</strong> results day, 4 June 2024, saw a Nifty fall of nearly 6% intraday, then a recovery.</li>
+<li><strong>Geopolitics/news:</strong> short-term shocks, usually priced in quickly.</li>
+</ul>
+<h2>1.4 Daily pre-market checklist (~10 minutes)</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Check</th>
+<th>Bullish (+1)</th>
+<th>Bearish (−1)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>GIFT Nifty vs previous close</td>
+<td>&gt; +0.3%</td>
+<td>&lt; −0.3%</td>
+</tr>
+<tr>
+<td>2</td>
+<td>US markets overnight</td>
+<td>Up</td>
+<td>Down</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Brent crude</td>
+<td>Falling</td>
+<td>Rising sharply</td>
+</tr>
+<tr>
+<td>4</td>
+<td>USD/INR</td>
+<td>Rupee strengthening</td>
+<td>Rupee weakening</td>
+</tr>
+<tr>
+<td>5</td>
+<td>FII + DII net (yesterday)</td>
+<td>Net buying</td>
+<td>Heavy net selling</td>
+</tr>
+<tr>
+<td>6</td>
+<td>India VIX</td>
+<td>Falling</td>
+<td>Spiking</td>
+</tr>
+<tr>
+<td>7</td>
+<td>Nifty vs 50-day average</td>
+<td>Above</td>
+<td>Below</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Event today? (RBI/CPI/Fed/results)</td>
+<td>—</td>
+<td>Mark "high uncertainty"</td>
+</tr>
+</tbody>
+</table>
+<p>Score: +4 or more = positive tilt, −4 or less = negative tilt, in between = no signal.</p>
+<p><strong>Automated:</strong> <code>python algo/checklist.py --gift 0.4</code> scores items 2–7 from live data (FII/DII fetched from NSE when available), logs them, and <code>--evaluate</code> later measures your real hit rate.</p>
+<p><strong>Honest caveat:</strong>
+- The checklist mostly tells you the <strong>opening mood</strong>, which GIFT Nifty already shows.
+- Over the day and the week, direction is close to a coin toss. Public information (FII data, US close, crude) is largely <strong>already priced in</strong> (efficient-markets idea).
+- Use it for <strong>context and risk control</strong> ("VIX is high → trade smaller"), not prediction.
+- Anyone claiming to reliably call the Nifty's daily direction is selling something.</p>
+<hr />
+<h2>✅ Check your understanding</h2>
+<ol>
+<li>Company X: total market cap ₹10 lakh crore, 50% promoter holding. Company Y: ₹6 lakh crore, 0% promoter holding. Which has more Nifty weight, and why?</li>
+<li>HDFC Bank (12% weight) falls 3%; everything else is flat. Roughly how many points does the Nifty (at 25,000) fall?</li>
+<li>The RBI cuts the repo rate by 25 bps but the Nifty falls that day. Give two possible reasons.</li>
+<li>Crude jumps 10% overnight. Name one sector likely hurt, one likely helped, and explain the path through the rupee.</li>
+<li>India VIX is 22. What's the approximate expected 1-month Nifty move, and what does that mean for position size?</li>
+<li>FIIs sold ₹4,000 crore yesterday but the Nifty closed up. How is that possible?</li>
+</ol><div class="nav"><span></span><a href="part-2.html">Reading charts →</a></div><p class="note">Educational only, not investment advice. SEBI found 87.7% of individual F&O traders lost money in FY26.</p></main></body></html>

@@ -1,0 +1,306 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Your first algorithm</title><link rel="stylesheet" href="style.css"></head>
+<body><main><header><a class="back" href="index.html" aria-label="Back">←</a><span class="t">Part 4</span></header><h1>Part 4: Build Your First Algorithm (Python)</h1>
+<blockquote>
+<p>Educational code only. Not investment advice. SEBI found <strong>87.7% of individual F&amp;O traders lost
+money in FY26</strong>. Never move a strategy to F&amp;O or real money before it passes every step below.</p>
+</blockquote>
+<p>All code is in <a href="code.html"><code>algo/</code></a>. Install with <code>pip install -r algo/requirements.txt</code>, then run
+commands from inside <code>algo/</code>.</p>
+<hr />
+<h2>4.1 The strategy: 50/200 SMA crossover</h2>
+<ul>
+<li><strong>BUY</strong> when the 50-day SMA crosses <strong>above</strong> the 200-day SMA ("golden cross").</li>
+<li><strong>SELL</strong> when it crosses <strong>below</strong> ("death cross").</li>
+<li>Long-only, one position, whole shares.</li>
+<li><strong>Hypothesis (Part 3 step 1):</strong> trends persist; the cross identifies a long-term uptrend late but reliably, and avoids the worst of long bear markets.</li>
+</ul>
+<pre><code class="language-bash">python backtest.py                                   # RELIANCE.NS, 15 years, ₹1 lakh
+python backtest.py HDFCBANK.NS INFY.NS TCS.NS ITC.NS  # several stocks + summary table
+python backtest.py RELIANCE.NS --trades               # full trade log
+</code></pre>
+<h2>4.2 How the code is organised</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>data.py</code></td>
+<td>Downloads OHLCV from yfinance (adjusted for splits/bonuses/dividends); cleans bad prints</td>
+</tr>
+<tr>
+<td><code>strategies.py</code></td>
+<td>Each strategy returns a daily <strong>target</strong> (1 = be long, 0 = be flat) using only past data</td>
+</tr>
+<tr>
+<td><code>engine.py</code></td>
+<td><code>Trader.on_bar()</code>: day-by-day state machine, shared by backtest <strong>and</strong> paper trading</td>
+</tr>
+<tr>
+<td><code>costs.py</code></td>
+<td>Indian delivery costs</td>
+</tr>
+<tr>
+<td><code>metrics.py</code></td>
+<td>CAGR, drawdown, Sharpe, Sortino, Calmar, VaR, win rate, profit factor</td>
+</tr>
+<tr>
+<td><code>charts.py</code></td>
+<td>Price + SMAs + ▲ buy / ▼ sell / ✕ stop markers, equity vs benchmarks, drawdown</td>
+</tr>
+</tbody>
+</table>
+<h3>The engine's order of events (each day)</h3>
+<ol>
+<li>Fill the order decided <strong>yesterday at the close</strong> at <strong>today's open</strong> ± slippage.</li>
+<li>Check the ATR stop-loss against today's low (gap-downs fill at the open).</li>
+<li>At today's close, read the target and queue tomorrow's order.</li>
+</ol>
+<p>Using the same day's close for both signal and fill is <strong>look-ahead bias</strong>, the most common backtest bug.</p>
+<h3>Costs (<code>costs.py</code>, approximate; check your broker)</h3>
+<table>
+<thead>
+<tr>
+<th>Charge</th>
+<th>Rate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Brokerage (delivery, discount broker)</td>
+<td>₹0</td>
+</tr>
+<tr>
+<td>STT</td>
+<td>0.1% on buy <strong>and</strong> sell</td>
+</tr>
+<tr>
+<td>NSE transaction charge</td>
+<td>~0.003%</td>
+</tr>
+<tr>
+<td>SEBI fee</td>
+<td>₹10 per crore</td>
+</tr>
+<tr>
+<td>Stamp duty</td>
+<td>0.015% on buy</td>
+</tr>
+<tr>
+<td>GST</td>
+<td>18% on brokerage + exchange + SEBI fee</td>
+</tr>
+<tr>
+<td>DP charge</td>
+<td>~₹16 per sell</td>
+</tr>
+<tr>
+<td>Slippage (default)</td>
+<td>0.05% per fill</td>
+</tr>
+</tbody>
+</table>
+<h2>4.3 Metrics explained</h2>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CAGR</strong></td>
+<td>Compound annual growth rate: (final ÷ start)^(1/years) − 1</td>
+</tr>
+<tr>
+<td><strong>Max drawdown</strong></td>
+<td>Worst peak-to-trough fall. Ask: could I sit through this?</td>
+</tr>
+<tr>
+<td><strong>Win rate</strong></td>
+<td>% of closed trades that made money. <strong>Not</strong> a measure of profitability on its own</td>
+</tr>
+<tr>
+<td><strong>Sharpe</strong></td>
+<td>(Return − risk-free 6%) ÷ volatility, annualised. &gt;0.5 decent, &gt;1 good, &gt;2 suspicious</td>
+</tr>
+<tr>
+<td><strong>Sortino</strong></td>
+<td>Like Sharpe but only penalises downside volatility</td>
+</tr>
+<tr>
+<td><strong>Calmar</strong></td>
+<td>CAGR ÷ max drawdown</td>
+</tr>
+<tr>
+<td><strong>VaR 95%</strong></td>
+<td>Daily loss exceeded on ~1 day in 20</td>
+</tr>
+<tr>
+<td><strong>Profit factor</strong></td>
+<td>Gross profits ÷ gross losses</td>
+</tr>
+</tbody>
+</table>
+<h2>4.4 Results: 15 years (Nov 2011 – Nov 2026), ₹1 lakh</h2>
+<table>
+<thead>
+<tr>
+<th>Stock</th>
+<th>Strategy CAGR</th>
+<th>Max DD</th>
+<th>Sharpe</th>
+<th>Win rate</th>
+<th>Buy &amp; hold CAGR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RELIANCE</td>
+<td>5.7%</td>
+<td>−45.7%</td>
+<td>0.11</td>
+<td>64%</td>
+<td>15.5%</td>
+</tr>
+<tr>
+<td>HDFCBANK</td>
+<td>8.6%</td>
+<td>−35.6%</td>
+<td>0.23</td>
+<td>90%</td>
+<td>15.7%</td>
+</tr>
+<tr>
+<td>INFY</td>
+<td>0.0%</td>
+<td>−47.8%</td>
+<td>−0.17</td>
+<td>31%</td>
+<td>11.8%</td>
+</tr>
+<tr>
+<td>TCS</td>
+<td>10.6%</td>
+<td>−28.4%</td>
+<td>0.32</td>
+<td>50%</td>
+<td>13.7%</td>
+</tr>
+<tr>
+<td>ITC</td>
+<td>4.1%</td>
+<td>−43.7%</td>
+<td>−0.02</td>
+<td>44%</td>
+<td>9.4%</td>
+</tr>
+<tr>
+<td><em>Nifty 50 buy &amp; hold</em></td>
+<td>11.8%</td>
+<td>−38.4%</td>
+<td>0.43</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The strategy lost to buy-and-hold on every stock, and to the Nifty on every stock.</strong> Why:
+- <strong>Late signals:</strong> it sold Reliance near the March 2020 bottom and bought back higher.
+- <strong>Whipsaws</strong> in sideways markets (Infosys: 13 trades, mostly small losses, each paying costs).
+- <strong>Idle cash earns nothing</strong> (Reliance was invested only 72% of the time; try <code>--cash-rate 6</code>).
+- <strong>Win rate misleads:</strong> HDFC Bank won 90% of trades but earned about half of buy-and-hold.
+- <strong>Upside:</strong> it sometimes cut drawdowns (TCS −28% vs −53%).</p>
+<p><strong>Not modelled:</strong> capital-gains tax, Nifty dividends (<code>^NSEI</code> is a price index, ~1–1.5%/yr understated), survivorship bias (stocks picked with hindsight).</p>
+<h3>🏋️ Exercises</h3>
+<ol>
+<li>Run it on 5 other Nifty stocks. Does it ever beat buy-and-hold?</li>
+<li>Try <code>-p fast=20,slow=100</code>. Trying many settings and keeping the best = <strong>overfitting</strong>; check with <code>--oos-split 2021-01-01 --optimize "fast=10,20,50,100;slow=100,150,200,250"</code>.</li>
+<li>Add <code>--market-filter</code> (only buy when the Nifty is above its 200-day). Does it help?</li>
+<li>Add <code>--stop-atr 3 --risk-pct 2</code>. Compare drawdown and CAGR. (Reliance: drawdown −46% → −13%, CAGR → ~0%.)</li>
+<li><code>python backtest.py --list</code> and test every strategy on one stock.</li>
+</ol>
+<h2>4.5 Charts with buy/sell signals</h2>
+<p>Every backtest saves <code>charts/&lt;TICKER&gt;_&lt;strategy&gt;.png</code>:
+1. Price with SMAs and ▲ buy / ▼ sell / ✕ stop-loss markers
+2. (Oscillator panel for RSI/MACD strategies)
+3. Equity curve vs buy-and-hold of the stock and the Nifty 50
+4. Drawdown</p>
+<h2>4.6 Paper trading</h2>
+<p>Same engine, run forward one day at a time, with <strong>real unadjusted prices</strong> for fills and state saved in <code>paper_state.json</code>.</p>
+<pre><code class="language-bash">python paper_trade.py init RELIANCE.NS TCS.NS ICICIBANK.NS --capital 300000 --stop-atr 3
+python paper_trade.py run        # every trading day after 3:45 PM IST
+python paper_trade.py status     # cash, positions, stops, pending orders
+python paper_trade.py trades     # journal + win rate + net P&amp;L
+</code></pre>
+<p>Automate it (cron, Mon–Fri 4:15 PM IST):</p>
+<pre><code>15 16 * * 1-5  cd /path/to/algo &amp;&amp; python paper_trade.py run &gt;&gt; paper.log 2&gt;&amp;1
+</code></pre>
+<p><strong>Rules:</strong> paper trade <strong>at least 2–3 months</strong>, ideally through a correction. Compare with what the backtest predicted for the same period. If they differ a lot, find out why before going further.</p>
+<h2>4.7 Live trading with Zerodha Kite Connect</h2>
+<h3>How Kite Connect works</h3>
+<ol>
+<li>Create an app at developers.kite.trade (paid subscription for market data; check current pricing) → you get an <strong>API key</strong> and <strong>secret</strong>.</li>
+<li><strong>Register a static IP</strong> (mandatory since 1 April 2026; see 4.8).</li>
+<li><strong>Daily login (OAuth):</strong> open the login URL → log in with Zerodha ID + 2FA → you're redirected with a <code>request_token</code> → exchange it (with your secret) for an <strong>access token</strong>, valid until ~6 AM the next day.</li>
+<li>Use the token for API calls: <code>holdings()</code>, <code>positions()</code>, <code>ltp()</code>, <code>place_order()</code>, <code>place_gtt()</code>, <code>orders()</code>.</li>
+</ol>
+<pre><code class="language-bash">pip install kiteconnect
+export KITE_API_KEY=xxxx KITE_API_SECRET=yyyy       # never commit these
+python live_kite.py login                           # daily
+python live_kite.py status
+python live_kite.py run RELIANCE.NS --capital-per-stock 20000                     # DRY RUN (default)
+python live_kite.py run RELIANCE.NS --capital-per-stock 20000 --stop-atr 3 --live  # real orders
+</code></pre>
+<h3>What <code>run</code> does</h3>
+<ul>
+<li>Signals from daily data up to <strong>yesterday's close</strong> (same strategy code as the backtest).</li>
+<li><strong>BUY</strong> if the target turned on within <code>--lookback</code> sessions and you hold none; <strong>SELL</strong> if the target is 0 and you hold shares.</li>
+<li><strong>Marketable LIMIT</strong> orders (LTP ± 0.3%), CNC (delivery) product.</li>
+<li>Optional <strong>GTT stop-loss</strong> at entry − k × ATR.</li>
+<li>Execution algos (Part 3B): <code>--exec twap | vwap | iceberg</code>.</li>
+</ul>
+<h3>Safety rails</h3>
+<ul>
+<li><strong>Dry-run by default</strong>; <code>--live</code> requires typing <code>YES</code>.</li>
+<li><code>--max-order-value</code> (₹50,000 default) and <code>--max-orders</code> per run.</li>
+<li>A file named <code>KILL_SWITCH</code> blocks all trading.</li>
+<li>0.35 s pause between API calls (far below 10 orders/sec).</li>
+<li>Every order logged to <code>orders_log.csv</code>.</li>
+</ul>
+<h2>4.8 SEBI rules for retail algo trading (summary)</h2>
+<p>Full details: <a href="sebi.html"><code>algo/SEBI_RULES.md</code></a>.</p>
+<ul>
+<li>SEBI circular <strong>4 Feb 2025</strong>, <em>Safer participation of retail investors in algorithmic trading</em>.</li>
+<li><strong>Broker is responsible</strong> for all API orders; third-party algo providers must be exchange-empanelled.</li>
+<li><strong>Static IP whitelisting:</strong> API orders accepted only from a registered app + whitelisted static IP (<strong>mandatory from 1 April 2026</strong>).</li>
+<li><strong>Up to 10 orders/second</strong> per exchange/segment without registering your algo; above that it needs exchange registration and an Algo-ID.</li>
+<li><strong>Authenticated access only</strong> (OAuth/2FA, daily login).</li>
+<li><strong>White-box vs black-box:</strong> black-box providers must be SEBI-registered Research Analysts.</li>
+<li>Your own algo for yourself and close family is the simplest category. Selling it or running it for others needs registration.</li>
+</ul>
+<h2>4.9 Go-live checklist</h2>
+<ul>
+<li>☐ Beats buy-and-hold <strong>out-of-sample</strong> after costs</li>
+<li>☐ Not just the best of many parameter combinations</li>
+<li>☐ 2–3+ months of paper trading matching the backtest</li>
+<li>☐ Static IP registered; keys in environment variables only</li>
+<li>☐ Capital you can afford to lose entirely (a few thousand rupees to start)</li>
+<li>☐ Hard limits set; kill rule written down in advance</li>
+<li>☐ You check fills and positions daily (automation ≠ unattended)</li>
+</ul>
+<h2>✅ Check your understanding</h2>
+<ol>
+<li>Why does the engine fill at the <strong>next</strong> day's open instead of today's close?</li>
+<li>HDFC Bank had a 90% win rate but half the buy-and-hold return. Explain how.</li>
+<li>List three things the backtest does <strong>not</strong> model, and which direction each biases the result.</li>
+<li>Your strategy's in-sample Sharpe is 0.9 and out-of-sample is 0.1. What do you conclude?</li>
+<li>Why does the Kite access token expire daily, and what does SEBI require before your API orders are accepted?</li>
+<li>Your algo places 25 orders in one second. What happens, and what would you need to do to legally run it that way?</li>
+</ol><div class="nav"><a href="part-3b.html">← The giant firms</a><a href="part-5.html">Books →</a></div><p class="note">Educational only, not investment advice. SEBI found 87.7% of individual F&O traders lost money in FY26.</p></main></body></html>
