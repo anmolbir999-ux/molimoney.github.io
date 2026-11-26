@@ -930,13 +930,6 @@
       const lessons = train.brain === 'lessons' ? E.lessonsBefore(st, start) : [];
       const mistakes = train.brain === 'lessons' ? E.mistakesBefore(st, start) : [];
       const capital = trainCapital();
-      if (train.mode === 'repeat') {
-        busy = false; cancel = false;
-        btn.textContent = 'Update'; btn.classList.remove('stop'); $('progress').hidden = true;
-        return startRepeat({ data, nifty, tickers, missing, lessons, mistakes, capital, start, end });
-      }
-      const P = styleParams(train.style);
-      const tst = E.newTraining({ ...st.cfg, tickers, capital, stopAtr: P.stopAtr, brain: { ...P } }, start, end, lessons, mistakes);
       const calls = {};
       for (let i = 0; i < tickers.length; i++) {
         if (cancel) throw new Error('stopped');
@@ -944,11 +937,19 @@
         await new Promise((ok) => setTimeout(ok, 15));
         try { calls[tickers[i]] = E.trendCalls(data[tickers[i]].bars, nifty.bars, start, end); } catch (e) { calls[tickers[i]] = []; }
       }
+      Object.assign(train, { calls, data, nifty, pc: null, pcSym: tickers[0] });
+      if (train.mode === 'repeat') {
+        busy = false; cancel = false;
+        btn.textContent = 'Update'; btn.classList.remove('stop'); $('progress').hidden = true;
+        return startRepeat({ data, nifty, tickers, missing, lessons, mistakes, capital, start, end });
+      }
+      const P = styleParams(train.style);
+      const tst = E.newTraining({ ...st.cfg, tickers, capital, stopAtr: P.stopAtr, brain: { ...P } }, start, end, lessons, mistakes);
       progress(syms.length, syms.length, 'Warming up');
       await new Promise((ok) => setTimeout(ok, 30));
       const ctx = E.begin(tst, data, nifty, Date.now());
       E.skipTo(ctx, start);
-      Object.assign(train, { phase: 'running', tst, ctx, calls, data, nifty, pc: null, pcSym: tickers[0], playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx), runCapital: capital });
+      Object.assign(train, { phase: 'running', tst, ctx, playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx), runCapital: capital });
       train.timer = setInterval(trainTick, 100);
     } catch (e) {
       toast(e.message === 'stopped' ? 'Training cancelled' : 'Could not load history – ' + e.message);
@@ -976,7 +977,7 @@
     const sum = { id: Date.now().toString(36), at: nowIso(), label: train.label, start: eq[0]?.[0] || train.start, end: eq[eq.length - 1]?.[0] || train.end,
       brain: train.brain, stocks: Object.keys(tst.tickers).length, capital: train.runCapital, ret: idx.length ? idx[idx.length - 1] - 100 : 0,
       nret: nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null, dd: maxDD(idx), trades: S.n, win: S.winRate,
-      pnl: S.pnl, taught: false, trend: (() => { const r = E.scoreCalls(Object.values(train.calls || {}).flat()); return r.n ? { n: r.n, acc: r.hit / r.n, base: r.base / r.n } : null; })(), curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
+      pnl: S.pnl, taught: false, trend: trendSum(), curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
     st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
     store.save(st);
     Object.assign(train, { phase: 'done', playing: false, summary: sum, trades, preview: E.previewTeach(st, tst, todayIST()) });
@@ -1074,10 +1075,10 @@
     const label = train.preset === 'custom' ? `${fdate(R.start)} – ${fdate(R.end)}` : PRESETS[train.preset][0];
     const sum = { id: Date.now().toString(36), at: nowIso(), kind: 'repeat', route: 'walk', label: `${label} · walk forward`, start: R.start, end: R.end,
       brain: train.brain, stocks: R.cfg.tickers.length, capital: train.runCapital, ret: R.total, nret: null, dd: Math.min(0, ...done.map((f) => f.res.dd)),
-      trades: 0, win: NaN, pnl: 0, taught: false, unseenBest: R.total, unseenBase: R.baseTotal, changes: R.changes };
+      trades: 0, win: NaN, pnl: 0, taught: false, unseenBest: R.total, unseenBase: R.baseTotal, changes: R.changes, trend: trendSum() };
     st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
     R.sum = sum; train.phase = 'repeatDone'; store.save(st);
-    say(walkReport(), 'none');
+    say(walkReport() + trendLine(), 'none');
     if (train.autoApply && R.good) applyRepeat(true);
     if (tab === 'train') render();
   }
@@ -1105,12 +1106,14 @@
       <div class="r">${f.res ? `<b class="${cls(f.res.ret - f.baseRes.ret)}">${pct(f.res.ret)}</b><div class="m">current ${pct(f.baseRes.ret)}</div>` : ''}</div></div>`).join('') + `</div>`;
     if (done) {
       h += `<p class="sub">${!R.changes.length ? 'I kept the current settings throughout.' : R.good ? 'Beat the current settings on unseen data – the most trustworthy kind of result.' : 'Did not beat the current settings on unseen data – better not to apply.'}</p>`;
+      h += pastTrendCard('9999-12-31', true, R.folds[0].start, 'Traded stretches') + pastChartCard(R.end, true);
       if (R.changes.length) h += `<div class="sec">Settings it ended with</div><div class="card"><ul class="tags" style="font-size:14px;color:var(--fg)">${R.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>`;
       h += `<div class="actions">${R.sum.taught ? '<span class="m">Applied to the live brain.</span>' : R.good || !R.changes.length ? `<button class="btn sm" id="r_apply">Apply ${R.changes.length ? 'settings + lessons' : 'lessons'}</button>` : `<button class="btn warn sm" id="r_force">Apply anyway</button>`}<button class="btn ghost sm" id="t_new">Train again</button></div>`;
     }
     return h;
   }
 
+  const trendSum = () => { const r = E.scoreCalls(Object.values(train.calls || {}).flat()); return r.n ? { n: r.n, acc: r.hit / r.n, base: r.base / r.n } : null; };
   function repeatDone() {
     const R = train.rep, o = R.opt;
     const fullBest = E.evaluate(R.cfg, o.best, R.data, R.nifty, R.start, R.end, R.lessons, R.mistakes);
@@ -1126,7 +1129,7 @@
     const label = train.preset === 'custom' ? `${fdate(R.start)} – ${fdate(R.end)}` : PRESETS[train.preset][0];
     const sum = { id: Date.now().toString(36), at: nowIso(), kind: 'repeat', route: R.route, label: `${label} · ${R.route === 'evolve' ? `evolution ×${o.rounds}` : `repeat ×${o.rounds}`}`, start: R.start, end: R.end,
       brain: train.brain, stocks: R.cfg.tickers.length, capital: train.runCapital, ret: R.bestTrain, nret: null, dd: o.history.find((h) => h.better && E.paramKey(h.params) === E.paramKey(o.best))?.dd || 0,
-      trades: 0, win: NaN, pnl: 0, taught: false, unseenBest: R.unseenBest.ret, unseenBase: R.unseenBase.ret, changes: R.changes };
+      trades: 0, win: NaN, pnl: 0, taught: false, unseenBest: R.unseenBest.ret, unseenBase: R.unseenBase.ret, changes: R.changes, trend: trendSum() };
     st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
     R.sum = sum; train.phase = 'repeatDone'; store.save(st);
     say(repeatReport(), 'none');
@@ -1145,7 +1148,11 @@
       t += R.good ? `\n\nThey held up on unseen data, so they may be a real improvement. Say **apply** to use them (and add what I learned to my evidence).`
         : `\n\nThey did **worse** on unseen data – the gain was most likely luck from fitting the past (overfitting). I recommend **not** applying them. If you still want to, say **apply anyway**.`;
     }
-    return t;
+    return t + trendLine();
+  }
+  function trendLine() {
+    const t = trendSum(); if (!t) return '';
+    return `\n\nTrend calls (same for every round – they don't depend on the settings): ${t.n} calls, right ${Math.round(t.acc * 100)}% vs ${Math.round(t.base * 100)}% for always guessing.`;
   }
 
   function applyRepeat(auto, force) {
@@ -1195,6 +1202,7 @@
         <div class="row"><div><b>Training part</b><div class="m">${fdate(R.start)} – ${fdate(R.split)} · what the search optimised</div></div><div class="r"><b>${pct(R.bestTrain)}</b><div class="m">current ${pct(R.baseTrain)}</div></div></div>
         <div class="row"><div><b>Unseen part</b><div class="m">${fdate(R.split)} – ${fdate(R.end)} · never used in the search</div></div><div class="r"><b class="${cls(R.unseenBest.ret - R.unseenBase.ret)}">${pct(R.unseenBest.ret)}</b><div class="m">current ${pct(R.unseenBase.ret)}${R.unseenBest.nifty != null ? ` · Nifty ${pct(R.unseenBest.nifty)}` : ''}</div></div></div>
         <p class="sub">${!R.changes.length ? 'Nothing beat the current settings.' : R.good ? 'The new settings also did better on unseen data – they may be a real improvement.' : 'The new settings did worse on unseen data – the gain was most likely luck (overfitting). Better not to apply them.'}</p></div>`;
+      h += pastTrendCard('9999-12-31', true, R.split, 'Unseen part') + pastChartCard(R.end, true);
       if (R.changes.length) h += `<div class="sec">Best settings found</div><div class="card"><ul class="tags" style="font-size:14px;color:var(--fg)">${R.changes.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></div>`;
       h += `<div class="actions">${R.sum.taught ? '<span class="m">Applied to the live brain.</span>' : R.good || !R.changes.length ? `<button class="btn sm" id="r_apply">Apply ${R.changes.length ? 'settings + lessons' : 'lessons'}</button>` : `<button class="btn warn sm" id="r_force">Apply anyway</button>`}<button class="btn ghost sm" id="t_new">Train again</button></div>`;
     }
@@ -1204,7 +1212,7 @@
   }
 
   /** Trend calls the past account made, revealed only up to the replay date. */
-  function pastTrendCard(asOf, done) {
+  function pastTrendCard(asOf, done, split, splitLabel) {
     const C = train.calls; if (!C) return '';
     const all = Object.values(C).flat(); if (!all.length) return `<div class="sec">Trend calls</div><div class="card"><p class="empty">Not enough earlier history to make trend calls in this period.</p></div>`;
     const r = E.scoreCalls(all, asOf), p = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '–');
@@ -1213,6 +1221,11 @@
     h += `<p class="sub" style="margin-top:0">Every 20 sessions Moli called each stock's next 20 sessions using only what it knew that day. ${done ? '' : 'Results show up as the replay reaches each call\'s date.'}</p>`;
     h += `<div class="grid"><div><div class="m">Calls checked</div><div class="stat">${r.n}</div></div><div><div class="m">Right</div><div class="stat">${p(r.hit, r.n)}</div></div>
       <div style="margin-top:10px"><div class="m">Always guessing</div><b>${p(r.base, r.n)}</b></div><div style="margin-top:10px"><div class="m">Clear calls right</div><b>${p(r.leanHit, r.leaned)}</b> <span class="m">of ${r.leaned}</span></div></div>`;
+    if (split && r.n) {
+      const a = E.scoreCalls(all.filter((x) => x.d < split), asOf), b2 = E.scoreCalls(all.filter((x) => x.d >= split), asOf);
+      if (a.n) h += `<div class="row" style="margin-top:10px"><div><b>Before ${fdate(split)}</b><div class="m">${a.n} calls</div></div><div class="r"><b>${p(a.hit, a.n)}</b><div class="m">guessing ${p(a.base, a.n)}</div></div></div>`;
+      h += `<div class="row"${a.n ? '' : ' style="margin-top:10px"'}><div><b>${esc(splitLabel || 'Unseen part')}</b><div class="m">${b2.n} calls from ${fdate(split)}</div></div><div class="r"><b>${p(b2.hit, b2.n)}</b><div class="m">guessing ${p(b2.base, b2.n)}</div></div></div>`;
+    }
     if (r.n) h += `<p class="m" style="margin:10px 0 0">Up calls right ${r.upHit}/${r.up} · down calls right ${r.downHit}/${r.down} · the trend was the same 20 sessions later ${p(r.stay, r.n)} of the time. ${r.n < 30 ? 'Too few calls to judge yet.' : r.hit - r.base >= 0.04 * r.n ? 'Better than guessing here.' : r.hit > r.base ? 'Barely better than guessing.' : 'No better than guessing here.'}</p>`;
     const first = all.map((x) => x.d).sort()[0];
     if (!latest.length && first) h += `<p class="m" style="margin:10px 0 0">First calls from ${fdate(first)} – the model needs about 2 years of earlier prices to learn from.</p>`;
@@ -1376,10 +1389,10 @@
     const _t_skip = $('t_skip'); if (_t_skip) _t_skip.onpointerdown = pd(() => { E.stepDays(train.ctx, Infinity); trainDone(); });
     const _t_stop = $('t_stop'); if (_t_stop) _t_stop.onpointerdown = pd(() => { train.ctx.dates.length = train.ctx.pos; trainDone(); });
     on('t_teach', teachLive);
-    document.querySelectorAll('[data-tsym]').forEach((b) => { b.onpointerdown = pd(() => { train.pcSym = b.dataset.tsym; if (train.pc && train.phase === 'done') snapChart(train.pc.date); render(); }); });
+    document.querySelectorAll('[data-tsym]').forEach((b) => { b.onpointerdown = pd(() => { train.pcSym = b.dataset.tsym; if (train.pc && (train.phase === 'done' || train.phase === 'repeatDone')) snapChart(train.pc.date); render(); }); });
     const snap = $('pc_snap'); if (snap) snap.onpointerdown = pd(() => { const eq = train.tst.equity, d = eq.length ? eq[eq.length - 1][0] : train.start; snapChart(d); render(); });
     const rg = $('pc_date');
-    if (rg) rg.onchange = () => { const eq = train.tst.equity, upto = eq.length ? eq[eq.length - 1][0] : train.end; const days = train.data[train.pcSym].bars.d.filter((d) => d >= train.start && d <= upto); snapChart(days[+rg.value]); render(); };
+    if (rg) rg.onchange = () => { const eq = train.tst ? train.tst.equity : [], upto = eq.length ? eq[eq.length - 1][0] : (train.rep ? train.rep.end : train.end); const days = train.data[train.pcSym].bars.d.filter((d) => d >= train.start && d <= upto); snapChart(days[+rg.value]); render(); };
     on('t_new', () => { train = { phase: 'setup', preset: train.preset, from: train.from, to: train.to, brain: train.brain, speed: train.speed, mode: train.mode, rounds: train.rounds, autoApply: train.autoApply, capital: train.capital, route: train.route, style: train.style }; render(); });
   }
 
