@@ -36,6 +36,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.molimoney.app.system.DailyAlarm
+import com.molimoney.app.system.Notifier
+import com.molimoney.app.system.SpendListener
+import com.molimoney.app.ui.components.PrimaryButton
+import com.molimoney.app.ui.openAppInfo
+import com.molimoney.app.ui.openListenerSettings
+import com.molimoney.app.ui.rememberEnableWrapped
 import com.molimoney.app.data.Store
 import com.molimoney.app.ui.components.Bloom
 import com.molimoney.app.ui.components.Chip
@@ -49,7 +60,12 @@ import com.molimoney.app.ui.theme.Type
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(store: Store, onBack: () -> Unit) {
+fun SettingsScreen(store: Store, onBack: () -> Unit, onImport: () -> Unit = {}, onWrapped: () -> Unit = {}) {
+    val ctx = LocalContext.current
+    var listening by remember { mutableStateOf(SpendListener.hasAccess(ctx)) }
+    var canPost by remember { mutableStateOf(Notifier.canPost(ctx)) }
+    LifecycleResumeEffect(Unit) { listening = SpendListener.hasAccess(ctx); canPost = Notifier.canPost(ctx); onPauseOrDispose { } }
+    val enableWrapped = rememberEnableWrapped(store)
     val c = Moli.c
     val s = store.settings
     var name by remember { mutableStateOf(s.name) }
@@ -100,8 +116,54 @@ fun SettingsScreen(store: Store, onBack: () -> Unit) {
         }
         Reveal(3) {
             MCard {
+                ToggleRow("Daily wrap-up", "A recap of your day every evening, with a tip for tomorrow.", s.wrapped && canPost) { on ->
+                    if (on) enableWrapped() else { store.updateSettings { it.copy(wrapped = false) }; DailyAlarm.sync(ctx) }
+                }
+                if (s.wrapped && canPost) {
+                    Spacer(Modifier.height(12.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(19, 20, 21, 22, 23).forEach { h ->
+                            Chip("${h - 12} PM", s.wrappedHour == h) { store.updateSettings { it.copy(wrappedHour = h) }; DailyAlarm.sync(ctx) }
+                        }
+                    }
+                }
+                if (s.wrapped && !canPost) Text("Notifications are blocked for Moli. Allow them in App info.", style = Type.small, color = c.clay,
+                    modifier = Modifier.padding(top = 8.dp).press { openAppInfo(ctx) })
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    GhostButton("Watch today's", Modifier.weight(1f), onClick = onWrapped)
+                    GhostButton("Send test", Modifier.weight(1f)) { if (canPost) Notifier.wrapped(ctx) else enableWrapped() }
+                }
+            }
+        }
+        Reveal(4) {
+            MCard {
+                ToggleRow("Auto-log payments", "Reads payment alerts from bank, card and UPI apps and logs them for you. Chats and email are ignored.",
+                    s.autoTrack && listening) { on ->
+                    store.updateSettings { it.copy(autoTrack = on) }
+                    if (on && !listening) openListenerSettings(ctx)
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    when {
+                        listening && s.autoTrack -> "On. Moli is listening for payments."
+                        listening -> "Access granted, but logging is paused."
+                        else -> "Needs notification access. Tap the switch to open the setting."
+                    },
+                    style = Type.small, color = if (listening && s.autoTrack) c.sage else c.muted,
+                )
+                if (!listening) Text("Android 13+ may say “Restricted setting” for apps installed from a file. Fix: App info → ⋮ → Allow restricted settings.",
+                    style = Type.small, color = c.clay, modifier = Modifier.padding(top = 6.dp).press { openAppInfo(ctx) })
+            }
+        }
+        Reveal(5) {
+            MCard {
                 Eyebrow("Data")
                 Spacer(Modifier.height(10.dp))
+                PrimaryButton("Import bank statement", Modifier.fillMaxWidth(), onClick = onImport)
+                Spacer(Modifier.height(6.dp))
+                Text("CSV or OFX/QFX, as exported from your bank's app or website.", style = Type.small, color = c.muted)
+                Spacer(Modifier.height(12.dp))
                 GhostButton("Load sample data", Modifier.fillMaxWidth()) { confirm = "sample" }
                 Spacer(Modifier.height(8.dp))
                 GhostButton("Erase all transactions", Modifier.fillMaxWidth(), color = c.clay) { confirm = "erase" }
@@ -109,11 +171,11 @@ fun SettingsScreen(store: Store, onBack: () -> Unit) {
                 Text("Everything is stored only on this phone. Nothing is uploaded.", style = Type.small, color = c.muted)
             }
         }
-        Reveal(4) {
+        Reveal(6) {
             Column(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Bloom(28.dp)
                 Spacer(Modifier.height(8.dp))
-                Text("Moli 1.0", style = Type.small, color = c.faint)
+                Text("Moli 1.1", style = Type.small, color = c.faint)
             }
         }
     }
@@ -136,3 +198,20 @@ fun SettingsScreen(store: Store, onBack: () -> Unit) {
 }
 
 private val Streamed = com.molimoney.app.ui.components.Streamed
+
+@Composable
+private fun ToggleRow(title: String, sub: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    val c = Moli.c
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = Type.heading, color = c.ink)
+            Spacer(Modifier.height(2.dp))
+            Text(sub, style = Type.small, color = c.muted)
+        }
+        Spacer(Modifier.size(12.dp))
+        Switch(checked, onChange, colors = SwitchDefaults.colors(
+            checkedThumbColor = c.onClay, checkedTrackColor = c.clay, uncheckedThumbColor = c.faint,
+            uncheckedTrackColor = c.line, uncheckedBorderColor = c.line,
+        ))
+    }
+}

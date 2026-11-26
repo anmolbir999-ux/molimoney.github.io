@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,7 +53,7 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun ActivityScreen(store: Store, fmt: (Double) -> String, onOpen: (Tx) -> Unit) {
+fun ActivityScreen(store: Store, fmt: (Double) -> String, onOpen: (Tx) -> Unit, onImport: () -> Unit = {}) {
     val c = Moli.c
     var offset by rememberSaveable { mutableStateOf(0L) }
     val now = YearMonth.now()
@@ -61,7 +62,13 @@ fun ActivityScreen(store: Store, fmt: (Double) -> String, onOpen: (Tx) -> Unit) 
 
     Column(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(32.dp))
-        Reveal(0) { Text("Activity", style = Type.title, color = c.ink) }
+        Reveal(0) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Activity", style = Type.title, color = c.ink, modifier = Modifier.weight(1f))
+                Text("Import statement", style = Type.small, color = c.clay,
+                    modifier = Modifier.clip(CircleShape).border(1.dp, c.line, CircleShape).press(onImport).padding(horizontal = 14.dp, vertical = 8.dp))
+            }
+        }
         Spacer(Modifier.height(14.dp))
         Reveal(1) {
             Row(verticalAlignment = Alignment.CenterVertically) {

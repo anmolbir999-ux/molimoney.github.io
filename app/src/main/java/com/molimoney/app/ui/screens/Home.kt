@@ -29,6 +29,33 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.molimoney.app.logic.Mood
+import com.molimoney.app.logic.Report
+import com.molimoney.app.logic.Tone
+import com.molimoney.app.system.SpendListener
+import com.molimoney.app.ui.components.BubbleShape
+import com.molimoney.app.ui.components.Buddy
+import com.molimoney.app.ui.components.GhostButton
+import com.molimoney.app.ui.components.PrimaryButton
+import com.molimoney.app.ui.openAppInfo
+import com.molimoney.app.ui.openListenerSettings
 import com.molimoney.app.data.Store
 import com.molimoney.app.data.Tx
 import com.molimoney.app.data.earned
@@ -64,8 +91,11 @@ fun cumulative(txs: List<Tx>, m: YearMonth, upTo: Int): List<Float> {
 @Composable
 fun HomeScreen(
     store: Store, fmt: (Double) -> String, onSettings: () -> Unit, onGuide: () -> Unit,
-    onOpen: (Tx) -> Unit, onSeeAll: () -> Unit,
+    onOpen: (Tx) -> Unit, onSeeAll: () -> Unit, onWrapped: () -> Unit = {}, onImport: () -> Unit = {},
 ) {
+    val ctx = LocalContext.current
+    var listening by remember { mutableStateOf(SpendListener.hasAccess(ctx)) }
+    LifecycleResumeEffect(Unit) { listening = SpendListener.hasAccess(ctx); onPauseOrDispose { } }
     val c = Moli.c
     val txs = store.txs.toList()
     val today = LocalDate.now()
@@ -93,6 +123,52 @@ fun HomeScreen(
                 }
                 Box(Modifier.size(40.dp).clip(CircleShape).press(onSettings), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Settings, "Settings", tint = c.muted, modifier = Modifier.size(22.dp))
+                }
+            }
+        }
+
+        // Today, wrapped
+        Reveal(1) {
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.ink).press(onWrapped).padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Bloom(20.dp, color = c.clay)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Today, wrapped", style = Type.body.copy(fontWeight = FontWeight.Medium), color = c.bg)
+                    Text("Your day in a few taps", style = Type.small, color = c.bg.copy(alpha = 0.65f))
+                }
+                Text("Play ▸", style = Type.small, color = c.clay)
+            }
+        }
+
+        // Ask to auto-log payments
+        val showSetup = !store.settings.hideSetupCard && !(store.settings.autoTrack && listening)
+        if (showSetup) Reveal(1) {
+            MCard {
+                Row(verticalAlignment = Alignment.Top) {
+                    Buddy(52.dp, Mood.WAVE)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Want me to log payments for you?", style = Type.heading, color = c.ink)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Allow notification access and I'll note every payment alert from your bank, card or UPI apps automatically. It never leaves your phone.",
+                            style = Type.small, color = c.muted)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PrimaryButton("Allow access", Modifier.weight(1f)) {
+                        store.updateSettings { it.copy(autoTrack = true) }
+                        if (!listening) openListenerSettings(ctx)
+                    }
+                    GhostButton("Not now", Modifier.weight(1f)) { store.updateSettings { it.copy(hideSetupCard = true) } }
+                }
+                if (store.settings.autoTrack && !listening) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("If Android says “Restricted setting”: open App info → ⋮ → Allow restricted settings, then try again.",
+                        style = Type.small, color = c.clay, modifier = Modifier.press { openAppInfo(ctx) })
                 }
             }
         }
@@ -138,24 +214,7 @@ fun HomeScreen(
         }
 
         // Guide preview
-        report.tips.firstOrNull()?.let { tip ->
-            Reveal(3) {
-                MCard(Modifier.fillMaxWidth().press(onGuide)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Bloom(18.dp); Spacer(Modifier.width(8.dp)); Eyebrow("Moli suggests")
-                        Spacer(Modifier.weight(1f))
-                        if (report.potential > 0) Text("Save ~${fmt(report.potential)}/mo", style = Type.small, color = c.clay)
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text(tip.title, style = Type.heading, color = c.ink)
-                    Spacer(Modifier.height(4.dp))
-                    StreamText(tip.body, Type.body, c.muted, startDelay = 500, key = "home_" + tip.id + tip.body.hashCode(),
-                        modifier = Modifier)
-                    Spacer(Modifier.height(10.dp))
-                    Text("See all suggestions →", style = Type.small, color = c.clay)
-                }
-            }
-        }
+        if (report.tips.isNotEmpty()) Reveal(3) { BuddyAdvice(report, fmt, onGuide) }
 
         // Category breakdown
         val cats = month.filter { !it.isIncome }.groupBy { it.category }.mapValues { e -> e.value.sumOf { it.amount } }
@@ -220,8 +279,46 @@ fun HomeScreen(
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Spacer(Modifier.height(12.dp)); Bloom(40.dp); Spacer(Modifier.height(14.dp))
                     Text("Nothing logged yet", style = Type.heading, color = c.ink)
-                    Text("Tap + to add your income or a purchase.", style = Type.small, color = c.muted)
-                    Spacer(Modifier.height(12.dp))
+                    Text("Tap + to add your income or a purchase,", style = Type.small, color = c.muted)
+                    Text("or bring in your history from your bank.", style = Type.small, color = c.muted)
+                    Spacer(Modifier.height(14.dp))
+                    GhostButton("Import a bank statement", Modifier.fillMaxWidth(), onClick = onImport)
+                }
+            }
+        }
+    }
+}
+
+/** The little advisor with a speech bubble. Tap him for the next tip. */
+@Composable
+private fun BuddyAdvice(report: Report, fmt: (Double) -> String, onGuide: () -> Unit) {
+    val c = Moli.c
+    var i by rememberSaveable { mutableIntStateOf(0) }
+    val tip = report.tips[i % report.tips.size]
+    val mood = when (tip.tone) { Tone.WARN -> Mood.CONCERNED; Tone.IDEA -> Mood.HAPPY; Tone.GOOD -> Mood.HAPPY }
+    Row(verticalAlignment = Alignment.Top) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Buddy(74.dp, mood, Modifier.press { i++ })
+            Text("tap me", style = Type.small.copy(fontSize = 11.sp), color = c.faint)
+        }
+        Spacer(Modifier.width(4.dp))
+        Box(Modifier.weight(1f).clip(BubbleShape()).background(c.card).border(1.dp, c.line, BubbleShape()).padding(start = 9.dp)) {
+            AnimatedContent(tip, transitionSpec = { (fadeIn(tween(300)) + slideInVertically(tween(350)) { it / 12 }) togetherWith fadeOut(tween(150)) },
+                label = "tip") { t ->
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Eyebrow("Moli says", Modifier.weight(1f))
+                        if (t.saving > 0 && t.counts) Text("+${fmt(t.saving)}/mo", style = Type.small, color = c.sage)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(t.title, style = Type.heading, color = c.ink)
+                    Spacer(Modifier.height(4.dp))
+                    StreamText(t.body, Type.body, c.muted, startDelay = 400, key = "home_" + t.id + t.body.hashCode())
+                    Spacer(Modifier.height(10.dp))
+                    Row {
+                        Text("${(i % report.tips.size) + 1} of ${report.tips.size}", style = Type.small, color = c.faint, modifier = Modifier.weight(1f))
+                        Text("All suggestions →", style = Type.small, color = c.clay, modifier = Modifier.press(onGuide))
+                    }
                 }
             }
         }

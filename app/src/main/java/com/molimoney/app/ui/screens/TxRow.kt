@@ -34,7 +34,7 @@ fun TxRow(tx: Tx, fmt: (Double) -> String, modifier: Modifier = Modifier, onClic
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(tx.note.ifBlank { tx.category.label }, style = Type.body, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(tx.category.label, style = Type.small, color = c.muted)
+            Text(tx.category.label + when (tx.source) { "a" -> " · auto"; "i" -> " · imported"; else -> "" }, style = Type.small, color = c.muted)
         }
         Text(
             (if (tx.isIncome) "+" else "") + com.molimoney.app.logic.money(tx.amount, LocalCurrency.current, decimals = true),

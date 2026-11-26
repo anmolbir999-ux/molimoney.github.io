@@ -36,6 +36,8 @@ data class Tx(
     val category: Category,
     val note: String,
     val day: Long, // epoch day
+    /** "m" manual, "i" imported from a statement, "a" auto-logged from a payment notification. */
+    val source: String = "m",
 ) {
     val date: LocalDate get() = LocalDate.ofEpochDay(day)
     val month: YearMonth get() = YearMonth.from(date)
@@ -47,6 +49,11 @@ data class Settings(
     val currency: String = "$",
     val goalPct: Int = 20,
     val onboarded: Boolean = false,
+    val wrapped: Boolean = false,
+    val wrappedHour: Int = 21,
+    val autoTrack: Boolean = false,
+    val askedNotif: Boolean = false,
+    val hideSetupCard: Boolean = false,
 )
 
 fun List<Tx>.spent() = filter { !it.isIncome }.sumOf { it.amount }

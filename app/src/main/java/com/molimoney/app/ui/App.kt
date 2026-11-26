@@ -44,6 +44,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import com.molimoney.app.MainActivity
+import com.molimoney.app.logic.StatementImport
+import com.molimoney.app.ui.screens.ImportSheet
+import com.molimoney.app.ui.screens.ImportState
+import com.molimoney.app.ui.screens.WrappedScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.molimoney.app.data.Store
 import com.molimoney.app.data.Tx
 import com.molimoney.app.logic.money
@@ -61,13 +75,53 @@ import com.molimoney.app.ui.theme.Type
 enum class Tab(val label: String) { Home("Home"), Activity("Activity"), Guide("Guide") }
 
 @Composable
-fun App(store: Store) {
+fun App(store: Store, pending: String? = null, onPendingHandled: () -> Unit = {}) {
     val c = Moli.c
+    val ctx = LocalContext.current
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showWrapped by rememberSaveable { mutableStateOf(false) }
     var sheetOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Tx?>(null) }
+    var importState by remember { mutableStateOf<ImportState?>(null) }
+    val scope = rememberCoroutineScope()
     val fmt: (Double) -> String = { money(it, store.settings.currency) }
+
+    // Opened from a notification
+    LaunchedEffect(pending) {
+        when (pending) {
+            MainActivity.OPEN_WRAPPED -> { showSettings = false; showWrapped = true }
+            MainActivity.OPEN_ACTIVITY -> { showSettings = false; showWrapped = false; tab = Tab.Activity }
+        }
+        if (pending != null) onPendingHandled()
+    }
+
+    // Ask for notification permission once, right after onboarding.
+    val enableWrapped = rememberEnableWrapped(store)
+    LaunchedEffect(store.settings.onboarded) {
+        if (store.settings.onboarded && !store.settings.askedNotif) { delay(1200); enableWrapped() }
+    }
+
+    // Statement import
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) { importState = null; return@rememberLauncherForActivityResult }
+        importState = ImportState.Reading
+        scope.launch {
+            val started = System.currentTimeMillis()
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+                        ?: throw StatementImport.ImportError("I couldn't open that file.")
+                    StatementImport.parse(text, store.txs.toList())
+                }
+            }
+            delay((1400 - (System.currentTimeMillis() - started)).coerceAtLeast(0)) // let Moli "think" for a beat
+            importState = result.fold({ ImportState.Ready(it) }, { e ->
+                ImportState.Failed(if (e is StatementImport.ImportError) e.message ?: "Hmm." else "That file didn't look like a bank statement.")
+            })
+        }
+    }
+    val onImport: () -> Unit = { runCatching { picker.launch(arrayOf("text/*", "application/*", "*/*")) } }
 
     androidx.compose.runtime.CompositionLocalProvider(com.molimoney.app.ui.screens.LocalCurrency provides store.settings.currency) {
     Box(Modifier.fillMaxSize().background(c.bg)) {
@@ -84,7 +138,7 @@ fun App(store: Store) {
                 0 -> WelcomeScreen(store)
                 2 -> {
                     BackHandler { showSettings = false }
-                    SettingsScreen(store, onBack = { showSettings = false })
+                    SettingsScreen(store, onBack = { showSettings = false }, onImport = onImport, onWrapped = { showWrapped = true })
                 }
                 else -> Column(Modifier.fillMaxSize()) {
                     BackHandler(enabled = tab != Tab.Home) { tab = Tab.Home }
@@ -98,8 +152,9 @@ fun App(store: Store) {
                         ) { t ->
                             when (t) {
                                 Tab.Home -> HomeScreen(store, fmt, onSettings = { showSettings = true }, onGuide = { tab = Tab.Guide },
-                                    onOpen = { editing = it; sheetOpen = true }, onSeeAll = { tab = Tab.Activity })
-                                Tab.Activity -> ActivityScreen(store, fmt, onOpen = { editing = it; sheetOpen = true })
+                                    onOpen = { editing = it; sheetOpen = true }, onSeeAll = { tab = Tab.Activity },
+                                    onWrapped = { showWrapped = true }, onImport = onImport)
+                                Tab.Activity -> ActivityScreen(store, fmt, onOpen = { editing = it; sheetOpen = true }, onImport = onImport)
                                 Tab.Guide -> GuideScreen(store, fmt)
                             }
                         }
@@ -111,7 +166,13 @@ fun App(store: Store) {
                 }
             }
         }
+        AnimatedVisibility(showWrapped, enter = fadeIn(tween(350)) + scaleIn(tween(450), initialScale = 0.94f),
+            exit = fadeOut(tween(250)) + scaleOut(tween(250), targetScale = 0.96f)) {
+            BackHandler { showWrapped = false }
+            WrappedScreen(store, fmt) { showWrapped = false }
+        }
         if (sheetOpen) AddSheet(store, editing, onDismiss = { sheetOpen = false; editing = null })
+        importState?.let { st -> ImportSheet(store, st, onPickAnother = onImport, onDismiss = { importState = null }) }
     }
     }
 }

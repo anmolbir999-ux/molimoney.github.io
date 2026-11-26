@@ -22,7 +22,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.molimoney.app.data.Store
-import com.molimoney.app.ui.components.Bloom
+import com.molimoney.app.logic.Mood
+import com.molimoney.app.ui.components.Buddy
 import com.molimoney.app.ui.components.Chip
 import com.molimoney.app.ui.components.Eyebrow
 import com.molimoney.app.ui.components.GhostButton
@@ -44,9 +45,9 @@ fun WelcomeScreen(store: Store) {
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()
             .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
     ) {
-        Spacer(Modifier.height(64.dp))
-        Reveal(0) { Bloom(64.dp) }
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(40.dp))
+        Reveal(0) { Buddy(96.dp, Mood.WAVE) }
+        Spacer(Modifier.height(20.dp))
         StreamText("Hello. I'm Moli.", Type.display, c.ink, startDelay = 300, perWord = 140, key = "w1")
         Spacer(Modifier.height(12.dp))
         StreamText("A quiet guide for your money. Tell me what comes in and what goes out, and I'll show you where you could keep more.",

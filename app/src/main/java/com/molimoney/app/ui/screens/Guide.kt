@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.molimoney.app.data.Store
 import com.molimoney.app.logic.Advisor
 import com.molimoney.app.logic.Tone
+import com.molimoney.app.logic.Mood
+import com.molimoney.app.ui.components.Buddy
 import com.molimoney.app.ui.components.Bloom
 import com.molimoney.app.ui.components.Eyebrow
 import com.molimoney.app.ui.components.MCard
@@ -64,8 +66,8 @@ fun GuideScreen(store: Store, fmt: (Double) -> String) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Bloom(30.dp, thinking = thinking)
-            Spacer(Modifier.width(12.dp))
+            Buddy(54.dp, when { thinking -> Mood.THINKING; report.tips.any { it.tone == Tone.WARN } -> Mood.CONCERNED; else -> Mood.HAPPY })
+            Spacer(Modifier.width(10.dp))
             Column {
                 Text("Your guide", style = Type.title, color = c.ink)
                 AnimatedContent(thinking, transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) }, label = "t") { t ->
