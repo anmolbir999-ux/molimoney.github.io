@@ -914,6 +914,155 @@
     return ch;
   }
 
+  // ------------------------------------------------------------------ momentum rotation (portfolio level)
+  // Every month: rank a wide universe by 12-month return (skipping the last month), hold the top N,
+  // weight them by inverse volatility, scale exposure with the Nifty's trend (100% / 50% / 0%), and
+  // keep holdings that are still near the top (less churn). Indian costs, dividends, splits and
+  // capital-gains tax (STCG 20%, LTCG 12.5% above ₹1.25 lakh a year) are all applied.
+  const NIFTY50 = ['RELIANCE', 'HDFCBANK', 'ICICIBANK', 'INFY', 'TCS', 'ITC', 'LT', 'SBIN', 'BHARTIARTL', 'KOTAKBANK', 'AXISBANK', 'HINDUNILVR', 'BAJFINANCE', 'MARUTI', 'SUNPHARMA', 'M&M',
+    'HCLTECH', 'NTPC', 'TITAN', 'ULTRACEMCO', 'ASIANPAINT', 'POWERGRID', 'ONGC', 'ADANIENT', 'ADANIPORTS', 'NESTLEIND', 'JSWSTEEL', 'TATASTEEL', 'BAJAJFINSV', 'WIPRO', 'COALINDIA', 'GRASIM',
+    'TECHM', 'HINDALCO', 'CIPLA', 'DRREDDY', 'BAJAJ-AUTO', 'EICHERMOT', 'HEROMOTOCO', 'BRITANNIA', 'APOLLOHOSP', 'SBILIFE', 'HDFCLIFE', 'TATACONSUM', 'INDUSINDBK', 'SHRIRAMFIN', 'BEL', 'TRENT'].map((x) => x + '.NS');
+  // for training on the past: today's Nifty 50 plus former members, including ones that later collapsed – the
+  // liquidity filter (top 50 by traded value at each rebalance) then stands in for "was in the Nifty back then"
+  const ROT_UNIVERSE = [...NIFTY50, ...['BPCL', 'UPL', 'DIVISLAB', 'YESBANK', 'ZEEL', 'VEDL', 'IOC', 'GAIL', 'BHEL', 'IDEA', 'DLF', 'ACC', 'AMBUJACEM', 'PNB', 'BANKBARODA', 'LUPIN', 'AUROPHARMA', 'SAIL',
+    'TATAPOWER', 'RCOM', 'RELINFRA', 'SIEMENS', 'IDFCFIRSTB', 'SUZLON', 'UNITECH', 'SAMMAANCAP', 'RPOWER', 'ABB', 'NMDC', 'CANBK', 'HINDPETRO', 'TATACOMM'].map((x) => x + '.NS')];
+  const ROT_DEFAULTS = { topN: 10, lookback: 252, skip: 21, weight: 'invvol', gradual: false, crashGap: 5, buffer: 2, taxAware: true, riskAdj: false, minHist: 300, liquid: 50 };
+  function newRot(capital, cfg = {}) {
+    return { cfg: { ...ROT_DEFAULTS, ...cfg }, capital, cash: capital, pos: {}, lastDate: null, start: null, equity: [], trades: [], log: [], pending: null,
+      expo: 1, lastMonth: null, tax: { paid: 0, fy: null, st: 0, lt: 0 }, costs: 0, splitsDone: {}, divs: 0, invested: capital };
+  }
+  const rotFY = (d) => { const y = +d.slice(0, 4), m = +d.slice(5, 7); return m >= 4 ? y : y - 1; };
+  function rotPrep(data, sym) {
+    const D = data[sym]; if (D._rot) return D._rot;
+    const b = D.bars, n = b.d.length, lr = b.ac.map((x, i) => (i ? Math.log(x / b.ac[i - 1]) : 0)), vol = rollStd(lr, 63), s200 = sma(b.ac, 200);
+    const tv = sma(b.c.map((c, i) => c * (b.v[i] || 0)), 126); // average traded value – a point-in-time stand-in for "big enough to be in the Nifty"
+    return (D._rot = { b, idx: Object.fromEntries(b.d.map((d, i) => [d, i])), vol, s200, tv, n });
+  }
+  function rotTaxYearEnd(R, d) {
+    const T = R.tax, stG = Math.max(0, T.st), ltNet = T.lt + Math.min(0, T.st) /* ST losses offset LT gains */, ltG = Math.max(0, ltNet - 125000);
+    const due = Math.round(stG * 0.20 + ltG * 0.125);
+    if (due > 0) { R.cash -= due; T.paid += due; R.log.push({ d, t: `Paid ₹${due.toLocaleString('en-IN')} capital-gains tax for FY ${T.fy}-${String((T.fy + 1) % 100).padStart(2, '0')}` }); }
+    T.st = 0; T.lt = 0;
+  }
+  function rotSell(R, sym, q, px, d, reason) {
+    const P = R.pos[sym]; if (!P || q <= 0) return;
+    q = Math.min(q, P.q); const p = px * (1 - 0.05 / 100), c = cost(q * p, 'SELL');
+    R.cash += q * p - c; R.costs += c;
+    let left = q, gain = 0, basis = 0;
+    while (left > 0 && P.lots.length) { // FIFO lots → short or long term
+      const L = P.lots[0], k = Math.min(left, L.q), g = k * (p - L.p) - c * (k / q);
+      const days = (Date.parse(d) - Date.parse(L.d)) / 864e5;
+      if (days > 365) R.tax.lt += g; else R.tax.st += g;
+      gain += g; basis += k * L.p; L.q -= k; left -= k; if (L.q <= 0) P.lots.shift();
+    }
+    P.q -= q;
+    R.trades.push({ sym, side: 'SELL', d, q, p, pnl: gain, ret: basis ? (gain / basis) * 100 : 0, r: reason });
+    if (P.q <= 0) delete R.pos[sym];
+  }
+  function rotBuy(R, sym, q, px, d, reason) {
+    const p = px * (1 + 0.05 / 100);
+    while (q > 0 && q * p + cost(q * p, 'BUY') > R.cash) q--;
+    if (q <= 0) return;
+    const c = cost(q * p, 'BUY'); R.cash -= q * p + c; R.costs += c;
+    const P = R.pos[sym] || (R.pos[sym] = { q: 0, lots: [], since: d });
+    P.q += q; P.lots.push({ q, p, d });
+    R.trades.push({ sym, side: 'BUY', d, q, p, r: reason });
+  }
+  /** Rank the universe at the close of day d (only data up to d). */
+  function rotRank(R, data, d) {
+    const C = R.cfg, rows = [];
+    for (const sym in data) {
+      if (!data[sym] || !data[sym].bars || !data[sym].bars.d.length) continue;
+      const P = rotPrep(data, sym); let i = P.idx[d];
+      if (i === undefined) { let j = P.b.d.length - 1; while (j >= 0 && P.b.d[j] > d) j--; if (j >= 0 && (Date.parse(d) - Date.parse(P.b.d[j])) / 864e5 <= 7) i = j; } // a day or two stale is fine
+      if (i === undefined || i < Math.max(C.minHist, C.lookback + 1)) continue;
+      const b = P.b, m = b.ac[i - C.skip] / b.ac[i - C.lookback] - 1, v = P.vol[i];
+      if (!Number.isFinite(m) || !(v > 0) || b.c[i] <= 0) continue;
+      rows.push({ sym, mom: m, vol: v, score: C.riskAdj ? m / (v * Math.sqrt(252)) : m, px: b.c[i], tv: P.tv[i] || 0 });
+    }
+    if (C.liquid && rows.length > C.liquid) { rows.sort((a, b) => b.tv - a.tv); rows.length = C.liquid; }
+    rows.sort((a, b) => b.score - a.score); rows.forEach((r, k) => { r.rank = k + 1; });
+    return rows;
+  }
+  function rotTargets(R, data, d, niftyGap) {
+    const C = R.cfg, rows = rotRank(R, data, d), by = Object.fromEntries(rows.map((r) => [r.sym, r]));
+    // exposure from the Nifty's trend: above its 200-day avg → 100%; a little below → 50%; crash → 0 (until back above)
+    let ex = niftyGap > 0 ? 1 : niftyGap <= -C.crashGap ? 0 : R.expo === 0 ? 0 : C.gradual ? 0.5 : 1;
+    // keep holdings still ranked within topN × buffer; fill the rest from the top
+    const keep = Object.keys(R.pos).filter((s) => by[s] && by[s].rank <= C.topN * C.buffer && (by[s].mom > 0 || C.anyMom));
+    const pick = [...keep]; for (const r of rows) { if (pick.length >= C.topN) break; if (!pick.includes(r.sym) && (r.mom > 0 || C.anyMom)) pick.push(r.sym); }
+    const sel = pick.slice(0, Math.max(C.topN, keep.length));
+    const raw = sel.map((s) => (C.weight === 'invvol' ? 1 / by[s].vol : 1)), tot = raw.reduce((a, b) => a + b, 0) || 1;
+    const w = {}; sel.forEach((s, k) => { w[s] = Math.min(raw[k] / tot, 2 / C.topN); });
+    const ws = Object.values(w).reduce((a, b) => a + b, 0) || 1; for (const s in w) w[s] = (w[s] / ws) * ex;
+    return { w, ex, rows: rows.slice(0, 25).map((r) => ({ sym: r.sym, mom: Math.round(r.mom * 1000) / 10, rank: r.rank })) };
+  }
+  function rotValue(R, data, d) {
+    let v = R.cash;
+    for (const s in R.pos) { const P = rotPrep(data, s), i = P.idx[d]; let px = i !== undefined ? P.b.c[i] : null;
+      if (px == null) { let j = P.b.d.length - 1; while (j > 0 && P.b.d[j] > d) j--; px = P.b.c[j]; }
+      v += R.pos[s].q * px; }
+    return v;
+  }
+  /**
+   * Advance a rotation account through every trading day after R.lastDate up to `upto`.
+   * Signals at a close, trades at the next open. Works incrementally (live) or in one go (backtest).
+   */
+  function rotRun(R, data, nifty, upto, from) {
+    const nb = nifty.bars, nl = nifty._nl || (nifty._nl = niftyLookup(nb));
+    if (!R.start) R.start = from || nb.d[0];
+    // splits since a lot was bought: Yahoo's prices are already adjusted, so adjust our quantities to match
+    for (const s in R.pos) for (const sp of (data[s] && data[s].splits) || []) {
+      const sd = istDate(sp.ts), key = `${s}|${sd}`;
+      if (R.splitsDone[key] || sd <= R.pos[s].since) continue;
+      R.splitsDone[key] = 1; const P = R.pos[s], pp = rotPrep(data, s);
+      // only adjust lots whose recorded price still looks pre-split against today's (already adjusted) price history
+      P.lots.forEach((L) => { if (sd <= L.d) return; const i = pp.idx[L.d]; if (i === undefined || !(L.p / pp.b.o[i] > Math.sqrt(sp.ratio))) return; L.q = Math.round(L.q * sp.ratio); L.p /= sp.ratio; });
+      P.q = P.lots.reduce((a, L) => a + L.q, 0);
+    }
+    const dates = nb.d.filter((d) => d >= R.start && (!R.lastDate || d > R.lastDate) && d <= upto);
+    for (const d of dates) {
+      const fy = rotFY(d); if (R.tax.fy == null) R.tax.fy = fy; if (fy !== R.tax.fy) { rotTaxYearEnd(R, d); R.tax.fy = fy; }
+      // dividends to holders on the ex-date
+      for (const s in R.pos) { const dv = data[s] && data[s].divs && data[s].divs[d]; if (dv) { R.cash += R.pos[s].q * dv; R.divs += R.pos[s].q * dv; } }
+      // execute yesterday's plan at today's open
+      if (R.pending) {
+        const plan = R.pending; R.pending = null;
+        const val = rotValue(R, data, d), want = {};
+        for (const s in plan.w) { const P = rotPrep(data, s), i = P.idx[d]; if (i !== undefined) want[s] = Math.floor((val * plan.w[s] * 0.995) / P.b.o[i]); }
+        for (const s of Object.keys(R.pos)) { const P = rotPrep(data, s), i = P.idx[d]; if (i === undefined) continue;
+          const tq = want[s] || 0, cur = R.pos[s].q;
+          // tax-aware: don't sell a winner that turns long-term within 45 days if it is still ranked well
+          if (tq < cur && R.cfg.taxAware && plan.near && plan.near[s] && plan.ex > 0) continue;
+          if (tq === 0) rotSell(R, s, cur, P.b.o[i], d, plan.why[s] || 'dropped out');
+          else if (cur - tq > cur * 0.2) rotSell(R, s, cur - tq, P.b.o[i], d, 'rebalance'); }
+        for (const s in want) { const P = rotPrep(data, s), i = P.idx[d], cur = R.pos[s] ? R.pos[s].q : 0, tq = want[s];
+          if (tq > cur && (cur === 0 || tq - cur > cur * 0.2)) rotBuy(R, s, tq - cur, P.b.o[i], d, cur ? 'rebalance' : 'joined the top ' + R.cfg.topN); }
+      }
+      const n = nl(d), gap = n && n.s200 ? n.c / n.s200 - 1 : 0, gapPct = gap * 100;
+      // decide at the close: monthly rebalance, or immediately when the market's exposure level changes
+      const mo = d.slice(0, 7), C = R.cfg;
+      const exNow = gapPct > 0 ? 1 : gapPct <= -C.crashGap ? 0 : R.expo === 0 ? 0 : C.gradual ? 0.5 : 1;
+      if (mo !== R.lastMonth || exNow !== R.expo) {
+        const T = rotTargets(R, data, d, gapPct), why = {}, near = {};
+        for (const s in R.pos) {
+          if (!T.w[s]) why[s] = T.ex === 0 ? 'market crash filter' : 'dropped out of the top';
+          const P = R.pos[s], r = T.rows.find((x) => x.sym === s);
+          const lot = P.lots[0], age = lot ? (Date.parse(d) - Date.parse(lot.d)) / 864e5 : 0, pi = rotPrep(data, s).idx[d];
+          if (lot && age > 320 && age <= 365 && pi !== undefined && rotPrep(data, s).b.c[pi] > lot.p && r && r.rank <= C.topN * 3) near[s] = 1;
+        }
+        if (exNow !== R.expo) R.log.push({ d, t: exNow === 0 ? `Nifty ${gapPct.toFixed(1)}% below its 200-day average – moving to cash` : exNow === 0.5 ? 'Nifty dipped below its 200-day average – holding 50%' : 'Nifty back above its 200-day average – fully invested' });
+        R.pending = { w: T.w, ex: T.ex, why, near }; R.expo = exNow; R.lastMonth = mo; R.top = T.rows;
+      }
+      R.equity.push([d, Math.round(rotValue(R, data, d)), n ? n.c : null, R.invested]);
+      R.lastDate = d;
+    }
+    if (R.equity.length > 6000) R.equity.splice(0, R.equity.length - 6000);
+    if (R.trades.length > 3000) R.trades.splice(0, R.trades.length - 3000);
+    if (R.log.length > 200) R.log.splice(0, R.log.length - 200);
+    return R;
+  }
+
   // ------------------------------------------------------------------ predictions: candles, chart patterns, trend
   // Every signal is scored against the stock's OWN history: how often was the price higher
   // H sessions later when this signal appeared, compared with any normal day? No edge → we say so.
@@ -1242,7 +1391,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
-    predict, SIGNALS, signalMatrix, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
+    predict, SIGNALS, signalMatrix, NIFTY50, ROT_UNIVERSE, ROT_DEFAULTS, newRot, rotRun, rotRank, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, BEAT_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };
