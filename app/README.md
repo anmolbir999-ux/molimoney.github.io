@@ -11,9 +11,11 @@ Same design as the Moli finance guide (branch `claude/android-finance-app-ik79e5
 - **Activity:** every buy and sell by month, with why it was sold and what went wrong on losers.
 - **Train:** train on the past – watch one run or repeat until best (step by step, evolution, walk forward).
 - **Guide:** me vs the Nifty, where your money is, **Suggestions** (heads up / idea / nice – e.g. lagging the Nifty, idle cash, a stock nothing works on, sector concentration, costs eating profits, most common mistake, drawdown, time to re-test settings), each with a one-tap action; then what the brain learned and its strategy per stock.
+- **Stock page** (tap any stock): candlestick chart of the last 80 sessions with 20/50-day averages, support/resistance levels, candle-pattern markers and a 2-week trend cone; *Moli's read*; trend projection; support & resistance; today's candlestick, chart-pattern and trend signals.
+- **Predictions:** 8 candlestick patterns (doji, hammer, hanging man, shooting star, bullish/bearish engulfing, morning/evening star), chart patterns (20-day breakout/breakdown, sitting on support, under resistance, double bottom/top, squeeze, golden/death cross) and trend/momentum signals (strong up/down trend, RSI extremes, MACD turns). Each is scored on that stock's own last ~5 years: how often the price was higher 5 and 20 sessions later vs a normal day, with sample sizes. Signals combine into a lean (up / down / no clear edge). When a pattern's textbook meaning didn't hold on that stock, Moli says so. Also in the Guide (*Predictions*) and the chat (*predict RELIANCE*, *predictions*). Odds are in-sample and most patterns are close to a coin flip – shown, not hidden.
 - **Today, wrapped:** a story recap of the trading day ending with *Moli's note for tomorrow*.
 - **+ button:** ask Moli (chat), update, add a stock, change money, train, switch quick/normal, pause.
-- **Settings (⚙):** name, stocks, reminder, paper money, trading style, brain settings, data downloads.
+- **Settings (⚙):** name, stocks, reminder, paper money, trading style, brain settings, data downloads – including **Brain data** (JSON: settings, rules with evidence, strategy per stock, predictions, training runs, history) and **Brain evidence** (CSV of every trade the brain learned from).
 
 ## How it works
 - **Data:** free daily prices from Yahoo Finance (`query1.finance.yahoo.com`), fetched when you open the app or tap Update. Missed days are caught up one session at a time.

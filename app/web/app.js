@@ -116,7 +116,7 @@
     if (!st.lastDate) return st.cfg.warmYears + 2 <= 5 ? '5y' : '10y';
     const gap = (Date.now() - new Date(st.lastDate).getTime()) / 864e5;
     const newStock = st.cfg.tickers.some((t) => !st.tickers[t] || st.tickers[t].fresh);
-    return newStock ? '5y' : gap < 300 ? '2y' : gap < 1100 ? '5y' : '10y';
+    return gap < 1100 ? '5y' : '10y'; // 5 years: enough history for the prediction odds
   }
   const url = (s, r) => `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?range=${r}&interval=1d&events=div%2Csplit`;
 
@@ -157,6 +157,7 @@
       await new Promise((ok) => setTimeout(ok, 40));
       const before = st.lastDate;
       const res = E.run(st, data, nifty, Date.now());
+      for (const s in data) if (st.tickers[s]) { try { st.tickers[s].pred = E.predict(data[s].bars); } catch (e) { /* keep old */ } }
       const brief = briefing(res, before);
       if (brief) say(brief, res.days > 300 ? 'sim' : res.days ? 'pnl' : null);
       Object.assign(run, { days: res.days, from: res.days ? (before || st.warmStart) : null, to: st.lastDate });
@@ -225,7 +226,7 @@
     const t = st && st.tickers[s];
     const meta = t && t.fresh ? 'added – studies its history on the next update' : t ? `${t.active ? esc(E.STRATEGIES[t.active].label) : 'cash'}${t.live.qty ? ` · holding ${t.live.qty}` : ''}${t.removing ? ' · removing' : ''}` : inAcct && st ? 'added – downloads on next update' : '';
     const price = t && t.lastClose ? px(t.lastClose) : '';
-    return `<div class="row"><div><b>${sym(s)}</b><div class="m">${meta}</div></div>
+    return `<div class="row"><div ${t ? `data-stock="${esc(s)}" style="cursor:pointer"` : ''}><b>${sym(s)}</b><div class="m">${meta}${t && t.pred ? ' · chart & predictions ›' : ''}</div></div>
       <div style="display:flex;align-items:center;gap:10px"><span class="m">${price}</span>
       <button class="add ${inAcct ? 'rm' : ''}" data-${inAcct ? 'rm' : 'add'}="${esc(s)}" aria-label="${inAcct ? 'Remove' : 'Add'} ${sym(s)}">${inAcct ? '−' : '+'}</button></div></div>`;
   }
@@ -276,7 +277,9 @@
     h += `<div class="sec">Download your data</div><div class="card">
       <div class="row"><div><b>Trades</b><div class="m">Every paper &amp; practice trade: dates, prices, P&amp;L, mistake tags</div></div><button class="btn sm" data-dl="trades">CSV</button></div>
       <div class="row"><div><b>Daily equity</b><div class="m">Date, account value, capital, return, Nifty</div></div><button class="btn sm" data-dl="equity">CSV</button></div>
-      <div class="row"><div><b>Brain log</b><div class="m">Every switch, lesson and action, with timestamps</div></div><button class="btn sm" data-dl="brain">CSV</button></div>
+      <div class="row"><div><b>Brain log</b><div class="m">Every switch, lesson and action, with timestamps</div></div><button class="btn sm" data-dl="brainlog">CSV</button></div>
+      <div class="row"><div><b>Brain data</b><div class="m">Settings, learned rules with evidence, strategy per stock, predictions, training runs – everything it knows</div></div><button class="btn sm" data-dl="brain">JSON</button></div>
+      <div class="row"><div><b>Brain evidence</b><div class="m">Every trade the brain learned from (lived and from training), with entry conditions</div></div><button class="btn sm" data-dl="braincsv">CSV</button></div>
       <div class="row"><div><b>Update history</b><div class="m">When each update ran, what it processed, stopped or failed</div></div><button class="btn sm" data-dl="runs">CSV</button></div>
       <div class="row"><div><b>Training runs</b><div class="m">Every past-period training: dates, return vs Nifty, drawdown, trades</div></div><button class="btn sm" data-dl="trainings">CSV</button></div>
       <div class="row"><div><b>Full backup</b><div class="m">Everything, as JSON</div></div><button class="btn sm" data-dl="backup">JSON</button></div>
@@ -443,7 +446,8 @@
     }).join('') : `<p class="empty">No open positions – everything is in cash.</p>`) + `</div>`;
     h += `<div class="card"><div class="lbl">Your stocks · ${st.cfg.tickers.length}</div>` + Object.entries(T).slice(0, 6).map(([s, t]) => {
       const sp = t.spark.c, ch = sp.length > 1 ? (sp[sp.length - 1] / sp[sp.length - 2] - 1) * 100 : 0;
-      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${t.fresh ? 'studying its history…' : t.active ? esc(E.STRATEGIES[t.active].label) : 'in cash'}</div></div><div class="r">${px(t.lastClose)}<div class="m ${cls(ch)}">${pct(ch, 2)}</div></div></div>`;
+      const o = t.pred && t.pred.outlook;
+      return `<a class="row" data-stock="${esc(s)}"><div><b>${sym(s)}</b><div class="m">${t.fresh ? 'studying its history…' : t.active ? esc(E.STRATEGIES[t.active].label) : 'in cash'}${o && o.lean !== 'none' ? ` · leans ${o.lean}` : ''}</div></div><div class="r">${px(t.lastClose)}<div class="m ${cls(ch)}">${pct(ch, 2)} ›</div></div></a>`;
     }).join('') + `<div class="actions" style="margin-top:8px"><button class="btn sm ghost" data-act="stocks">Manage stocks</button><button class="btn sm ghost" data-act="money">Change money</button></div></div>`;
     return h;
   }
@@ -503,6 +507,7 @@
       <div class="kv"><span class="dot" style="background:var(--${pnl >= 0 ? 'sage' : 'clay'})"></span><span class="k">${pnl >= 0 ? 'Profit' : 'Loss'} so far</span><span class="v1">${inr(Math.abs(pnl))}</span><span class="v2 ${cls(pnl)}">${pct(ret)}</span></div>
       <p class="m" style="margin:8px 0 0">${E.brainParams(st).quick ? 'Quick trading – in and out within days.' : 'Normal trading – riding trends.'}</p></div>`;
     h += `<div class="sec">Suggestions</div>` + adv.map(advCard).join('');
+    h += `<div class="sec">Predictions · candles, chart patterns &amp; trend</div>` + predictionsCard();
     const R = st.learning.rules;
     h += `<div class="sec">What I've learned</div><div class="card">` + Object.entries(E.FEATURES).map(([k, f]) => {
       const r = R[k] || {};
@@ -606,6 +611,105 @@
     $('sheet').classList.add('open'); $('sheetScrim').classList.add('open');
   }
   function closeSheet() { $('sheet').classList.remove('open'); $('sheetScrim').classList.remove('open'); }
+
+  // ---------------------------------------------------------------- predictions UI
+  let curSym = null, prevTab = 'home';
+  function openStock(s) { prevTab = tab === 'stock' ? prevTab : tab; curSym = s; tab = 'stock'; render(); window.scrollTo(0, 0); }
+  const leanText = (o) => (o.lean === 'none' ? 'No clear edge' : `${o.strength === 'moderate' ? 'Leans' : 'Slightly leans'} ${o.lean}`);
+  /** What history says about one signal on this stock. */
+  function verdict(s, base) {
+    const st5 = s.h5;
+    if (st5.n < 8) return { t: `Too rare to judge here (seen ${st5.n}×)`, c: '' };
+    const edge = (st5.up - base.h5.up) * 100;
+    const bookUp = s.dir === 'bull', bookDown = s.dir === 'bear';
+    if (Math.abs(edge) < 3) return { t: 'No real edge here – about the same as any day', c: '' };
+    if ((bookUp && edge < 0) || (bookDown && edge > 0)) return { t: `Textbook says ${bookUp ? 'up' : 'down'} – on this stock it usually went the other way`, c: edge > 0 ? 'up' : 'down' };
+    return { t: `Historically ${edge > 0 ? 'bullish' : 'bearish'} here (${edge > 0 ? '+' : ''}${edge.toFixed(0)} pts vs a normal week)`, c: edge > 0 ? 'up' : 'down' };
+  }
+  function sigRow(s, base) {
+    const v = verdict(s, base), k = { candle: 'Candle', chart: 'Chart', trend: 'Trend' }[s.kind];
+    return `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center"><b>${esc(s.label)}</b><span class="pill ${s.dir === 'bear' ? 'neg' : ''}" style="${s.dir === 'neutral' ? 'background:var(--line);color:var(--muted)' : ''}">${k}${s.dir === 'neutral' ? '' : ' · ' + (s.dir === 'bull' ? 'textbook up' : 'textbook down')}</span></div>
+      <div class="m" style="margin-top:3px">${esc(s.what)}</div>
+      <div style="margin-top:6px;font-size:14px">Higher 5 sessions later: <b>${Number.isNaN(s.h5.up) ? '–' : Math.round(s.h5.up * 100) + '%'}</b> <span class="m">(seen ${s.h5.n}× · avg ${pct(s.h5.avg, 2)} · a normal week ${Math.round(base.h5.up * 100)}%)</span></div>
+      <div class="${v.c}" style="font-size:13px;margin-top:2px">${esc(v.t)}</div></div>`;
+  }
+  /** Candlestick chart with 20/50-day averages, support/resistance, pattern marks and the trend cone. */
+  function candleChart(P) {
+    const C = P.chart, n = C.c.length, ahead = P.proj.ahead, W = 340, H = 210, padR = 34, padT = 8, padB = 8;
+    const vals = [...C.l, ...C.h, ...P.proj.path].filter((x) => x != null); // cone is clipped at the edges
+    const lo = Math.min(...vals) * 0.995, hi = Math.max(...vals) * 1.005;
+    const slot = (W - padR) / (n + ahead), X = (i) => slot * (i + 0.5), Y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+    const cw = Math.max(1.5, slot * 0.62);
+    let g = '';
+    const lvl = (v, col, txt) => { if (v < lo || v > hi) return ''; return `<line x1="0" x2="${W - padR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="${col}" stroke-width="1" stroke-dasharray="4 4" opacity=".8"/><text x="${W - padR + 3}" y="${(Y(v) + 3).toFixed(1)}" font-size="8.5" fill="${col}">${txt}</text>`; };
+    P.levels.sup.forEach((x) => { g += lvl(x.level, css('--sage'), Math.round(x.level)); });
+    P.levels.res.forEach((x) => { g += lvl(x.level, css('--clay'), Math.round(x.level)); });
+    const cone = [...P.proj.hiPath.map((v, k) => `${X(n - 1 + k).toFixed(1)},${Y(v).toFixed(1)}`), ...P.proj.loPath.map((v, k) => `${X(n - 1 + k).toFixed(1)},${Y(v).toFixed(1)}`).reverse()].join(' ');
+    g += `<polygon points="${cone}" fill="${css('--ochre')}" opacity=".14"/>`;
+    g += `<path d="${P.proj.path.map((v, k) => `${k ? 'L' : 'M'}${X(n - 1 + k).toFixed(1)},${Y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--ochre')}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+    const line = (arr, col) => { let d = ''; arr.forEach((v, i) => { if (v != null) d += `${d ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`; }); return `<path d="${d}" fill="none" stroke="${col}" stroke-width="1.3" opacity=".9"/>`; };
+    g += line(C.s50, css('--slate')) + line(C.s20, css('--clay-d'));
+    for (let i = 0; i < n; i++) {
+      const up = C.c[i] >= C.o[i], col = up ? css('--sage') : css('--clay');
+      const yT = Y(Math.max(C.o[i], C.c[i])), yB = Y(Math.min(C.o[i], C.c[i]));
+      g += `<line x1="${X(i).toFixed(1)}" x2="${X(i).toFixed(1)}" y1="${Y(C.h[i]).toFixed(1)}" y2="${Y(C.l[i]).toFixed(1)}" stroke="${col}" stroke-width="1"/>`;
+      g += `<rect x="${(X(i) - cw / 2).toFixed(1)}" y="${yT.toFixed(1)}" width="${cw.toFixed(1)}" height="${Math.max(1, yB - yT).toFixed(1)}" fill="${col}" rx="0.6"/>`;
+    }
+    C.marks.forEach((m) => {
+      const x = X(m.i), up = m.dir === 'bull', y = up ? Y(C.l[m.i]) + 7 : Y(C.h[m.i]) - 7, s = 3.6;
+      g += `<path d="${up ? `M${x - s},${y + s}L${x + s},${y + s}L${x},${y - s}Z` : `M${x - s},${y - s}L${x + s},${y - s}L${x},${y + s}Z`}" fill="${up ? css('--sage') : css('--clay')}"/>`;
+    });
+    g += `<line x1="${X(n - 1).toFixed(1)}" x2="${X(n - 1).toFixed(1)}" y1="${padT}" y2="${H - padB}" stroke="${css('--line')}" stroke-width="1"/>`;
+    return `<svg class="chart" style="height:230px;overflow:hidden" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>
+      <div class="legend" style="flex-wrap:wrap;gap:6px 14px"><span><i style="background:var(--clay-d)"></i>20-day avg</span><span><i style="background:var(--slate)"></i>50-day avg</span><span><i style="background:var(--ochre)"></i>trend cone (2 weeks)</span><span>▲▼ candle patterns</span><span>– – support / resistance</span></div>`;
+  }
+
+  function viewStock() {
+    const T = st.tickers[curSym], P = T && T.pred;
+    let h = pageHead(sym(curSym || ''), T ? `${px(T.lastClose)}${P ? ` · <span class="${cls(P.change)}">${pct(P.change, 2)}</span> on ${fdate(P.asOf)}` : ''}` : '', prevTab);
+    if (!T) return h + '<p class="empty">Not in your list.</p>';
+    if (!P) return h + `<div class="card"><p class="empty">Predictions appear after the next update.</p><div class="actions"><button class="btn sm" data-act="update">Update now</button></div></div>`;
+    const o = P.outlook, mood = o.lean === 'up' ? 'happy' : o.lean === 'down' ? 'concerned' : 'thinking';
+    h += `<div class="card"><div class="lbl">Last ${P.chart.c.length} sessions + 2-week trend cone</div>${candleChart(P)}</div>`;
+    h += `<div class="says">${buddy(70, mood)}<div class="bub"><div class="adv"><div class="top" style="margin:0"><span class="lbl">Moli's read</span><span class="pill ${o.lean === 'down' ? 'neg' : ''}" style="${o.lean === 'none' ? 'background:var(--line);color:var(--muted)' : ''}">${esc(leanText(o))}</span></div></div>
+      <h3>${o.lean === 'none' ? 'Today\'s signals don\'t tell me much' : `Similar setups rose ${Math.round(o.p5 * 100)}% of the time`}</h3>
+      <p>${P.active.length ? `${P.active.length} signal${P.active.length > 1 ? 's' : ''} today. ` : 'No signals today. '}On ${sym(curSym)} a normal week ends higher ${Math.round(P.base.h5.up * 100)}% of the time${o.lean === 'none' ? '' : `; with today's signals it was ${Math.round(o.p5 * 100)}% (${o.edge > 0 ? '+' : ''}${o.edge.toFixed(1)} pts, from ${o.n} past cases)`}. Based on ${P.years} years of this stock's prices – a tilt in the odds, not a promise.</p></div></div>`;
+    const pr = P.proj;
+    h += `<div class="card"><div class="lbl">Trend projection</div><div class="big md">${px(pr.end)}</div>
+      <p class="sub">If the last ${pr.look} sessions' trend (${pct(pr.slopePct, 2)} a day) simply continued, that's where it would be in ${pr.ahead} sessions. 9 times in 10 the normal day-to-day swings would land it between ${px(pr.lo)} and ${px(pr.hi)}. ${pr.r2 < 0.3 ? 'The trend has been weak and choppy, so trust this even less.' : `The trend has been fairly steady (fit ${Math.round(pr.r2 * 100)}%), but trends end without warning.`}</p></div>`;
+    const lv = P.levels;
+    h += `<div class="card"><div class="lbl">Support &amp; resistance</div>
+      ${lv.res.map((x) => `<div class="row"><div><b>Resistance ${px(x.level)}</b><div class="m">${pct((x.level / P.price - 1) * 100)} away · rallies stopped here ${x.touches}×</div></div></div>`).join('')}
+      ${lv.sup.map((x) => `<div class="row"><div><b>Support ${px(x.level)}</b><div class="m">${pct((x.level / P.price - 1) * 100)} away · falls stopped here ${x.touches}×</div></div></div>`).join('')}
+      ${!lv.res.length && !lv.sup.length ? '<p class="empty">No clear levels in the last year.</p>' : ''}${!lv.res.length && lv.sup.length ? '<p class="m" style="margin:6px 0 0">No resistance above – it\'s near its 1-year high.</p>' : ''}</div>`;
+    const byKind = (k) => P.active.filter((s) => s.kind === k);
+    h += `<div class="sec">Candlestick patterns</div><div class="card">${byKind('candle').length ? byKind('candle').map((s) => sigRow(s, P.base)).join('') : '<p class="empty">No pattern on the last candle.</p>'}
+      ${P.recent.length ? `<div class="lbl" style="margin-top:12px">Seen in the last 2 weeks</div>` + P.recent.map((s) => `<div class="row"><div><b>${esc(s.label)}</b><div class="m">${s.ago} session${s.ago > 1 ? 's' : ''} ago · since then ${pct(s.after)}</div></div><div class="r"><span class="m">usually ${Number.isNaN(s.h5.up) ? '–' : Math.round(s.h5.up * 100) + '% up'}</span></div></div>`).join('') : ''}</div>`;
+    h += `<div class="sec">Chart patterns</div><div class="card">${byKind('chart').length ? byKind('chart').map((s) => sigRow(s, P.base)).join('') : '<p class="empty">No breakout, level test, double top/bottom, squeeze or cross today.</p>'}</div>`;
+    h += `<div class="sec">Trend &amp; momentum</div><div class="card">${byKind('trend').length ? byKind('trend').map((s) => sigRow(s, P.base)).join('') : '<p class="empty">No strong trend, RSI extreme or MACD turn today.</p>'}</div>`;
+    h += `<div class="card"><div class="lbl">What I'm doing with it</div><p class="sub" style="margin-top:4px">${T.live.qty ? `Holding ${T.live.qty} shares.` : 'Not holding it.'} ${T.active ? `Strategy: ${esc(E.STRATEGIES[T.active].label)}.` : 'No strategy I trust on it right now.'} My trades follow the strategy I picked – these predictions are here to help you read the chart.</p>
+      <div class="actions"><button class="btn sm ghost" data-ask="why ${esc(sym(curSym))}">Ask why</button></div></div>`;
+    h += `<p class="note">Every percentage is what happened after the same signal on this stock over the last ${P.years} years (in-sample). Across big Indian stocks most patterns are barely better than a coin flip – Moli shows the numbers so you can judge.</p>`;
+    return h;
+  }
+
+  function predictionsCard() {
+    const rows = Object.entries(st.tickers).filter(([, t]) => t.pred).map(([s, t]) => ({ s, o: t.pred.outlook, n: t.pred.active.length, P: t.pred }));
+    if (!rows.length) return `<div class="card"><p class="empty">Predictions appear after the next update.</p></div>`;
+    rows.sort((a, b) => Math.abs(b.o.lean === 'none' ? 0 : b.o.edge) - Math.abs(a.o.lean === 'none' ? 0 : a.o.edge));
+    return `<div class="card">` + rows.map(({ s, o, n, P }) => `<a class="row" data-stock="${esc(s)}"><div><b>${sym(s)}</b><div class="m">${n ? P.active.slice(0, 2).map((x) => x.label).join(', ') + (n > 2 ? ` +${n - 2}` : '') : 'no signals today'}</div></div>
+      <div class="r"><span class="pill ${o.lean === 'down' ? 'neg' : ''}" style="${o.lean === 'none' ? 'background:var(--line);color:var(--muted)' : ''}">${o.lean === 'none' ? 'no edge' : `leans ${o.lean}`}</span>${o.lean === 'none' ? '' : `<div class="m" style="margin-top:3px">${Math.round(o.p5 * 100)}% rose · normally ${Math.round(P.base.h5.up * 100)}%</div>`}</div></a>`).join('') +
+      `<p class="m" style="margin:8px 0 0">Odds of being higher in 5 sessions after today's signals, from each stock's own history. Tap a stock for the chart and patterns.</p></div>`;
+  }
+
+  function predictText(s) {
+    const T = st.tickers[s], P = T && T.pred;
+    if (!P) return `I don't have predictions for ${sym(s)} yet – they appear after the next update.`;
+    const o = P.outlook;
+    return `**${sym(s)}** ${px(P.price)} (${pct(P.change, 2)} on ${fdate(P.asOf)}). **${leanText(o)}**: a normal week ends higher ${Math.round(P.base.h5.up * 100)}% of the time; ${o.lean === 'none' ? "today's signals don't change that much" : `after setups like today's it was ${Math.round(o.p5 * 100)}% (${o.n} past cases)`}.` +
+      (P.active.length ? `\n\nToday's signals:\n${P.active.map((x) => `- ${x.label}: higher a week later ${Number.isNaN(x.h5.up) ? '–' : Math.round(x.h5.up * 100) + '%'} of ${x.h5.n} times`).join('\n')}` : '\n\nNo candle or chart pattern today.') +
+      `\n\nTrend cone for 2 weeks: about ${px(P.proj.end)} (likely ${px(P.proj.lo)}–${px(P.proj.hi)}).${P.levels.res[0] ? ` Resistance ${px(P.levels.res[0].level)}.` : ''}${P.levels.sup[0] ? ` Support ${px(P.levels.sup[0].level)}.` : ''}\n\nOdds from this stock's last ${P.years} years – not a promise.`;
+  }
 
   // ---------------------------------------------------------------- training on the past
   const MIN_TRAIN = '2008-01-01';
@@ -1129,7 +1233,7 @@
   }
 
   // what Moli understands
-  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons", "with 10 lakh", "until max profit", "30 rounds", "evolution", "walk forward"), **apply** what it learned, show or **reset brain** settings, **quick mode** / **normal mode** (in and out fast vs ride trends; **take profit at 2 ATR**, **time limit 5 days**, **stop-loss 1.5 ATR**, **train quick last 5 years**), **teach**, say when the **market opens**, and **download trades** (or equity, brain log, history, backup).';
+  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons", "with 10 lakh", "until max profit", "30 rounds", "evolution", "walk forward"), **apply** what it learned, show or **reset brain** settings, **quick mode** / **normal mode** (in and out fast vs ride trends; **take profit at 2 ATR**, **time limit 5 days**, **stop-loss 1.5 ATR**, **train quick last 5 years**), **teach**, say when the **market opens**, and **predict RELIANCE** (candlestick, chart-pattern and trend odds), **download trades** (or equity, brain data, brain evidence, brain log, history, backup).';
   async function respond(text) {
     const q = text.trim(), l = q.toLowerCase();
     const known = new Set([...Object.values(CATALOG).flat(), ...st.cfg.tickers.map(sym)]);
@@ -1223,13 +1327,21 @@
       return say(gone ? `Removed ${sym(s)}; its ${inr(T ? T.live.cash : st.slice)} is withdrawn.` : `I'll sell ${sym(s)} at the next open, then remove it.`);
     }
     if (/\b(download|export|save)\b/.test(l)) {
-      const k = /equity|value|daily/.test(l) ? 'equity' : /brain|log|event/.test(l) ? 'brain' : /history|update|run/.test(l) ? 'runs' : /backup|everything|all|json/.test(l) ? 'backup' : /training/.test(l) ? 'trainings' : 'trades';
-      exportData(k); return say(`Saved the ${({ trades: 'trades', equity: 'daily equity', brain: 'brain log', runs: 'update history', backup: 'full backup', trainings: 'training runs' })[k]} file${N ? ' to Downloads/Moli' : ''}.`);
+      const k = /equity|value|daily/.test(l) ? 'equity' : /evidence/.test(l) ? 'braincsv' : /brain/.test(l) && !/log/.test(l) ? 'brain' : /log|event/.test(l) ? 'brainlog' : /history|update|run/.test(l) ? 'runs' : /backup|everything|all|json/.test(l) ? 'backup' : /training/.test(l) ? 'trainings' : 'trades';
+      exportData(k); return say(`Saved the ${({ trades: 'trades', equity: 'daily equity', brain: 'brain data', braincsv: 'brain evidence', brainlog: 'brain log', runs: 'update history', backup: 'full backup', trainings: 'training runs' })[k]} file${N ? ' to Downloads/Moli' : ''}.`);
     }
     if (/\b(market|open|close|when)\b/.test(l)) { const mk = market(); return say(mk.open ? `The market is open – it closes in ${dur(mk.closeAt - Date.now())} (3:30 PM). New prices arrive after 3:45 PM.` : `The market is closed. It opens in ${dur(mk.nextOpen - Date.now())} (9:15 AM, holidays not counted).${pendingLines().length ? `\n\nAt the open:\n${pendingLines().join('\n')}` : ''}`); }
     if (/\b(position|holding|hold|own|portfolio|invested in)/.test(l)) {
       const pos = Object.entries(st.tickers).filter(([, t]) => t.live.qty > 0);
       return say(pos.length ? `I hold:\n${pos.map(([s, t]) => { const x = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / x.ep - 1) * 100; return `- ${sym(s)}: ${x.q} at ${px(x.ep)}, now ${px(t.lastClose)} (${pct(r)})${x.stop ? `, stop ${px(x.stop)}` : ''}`; }).join('\n')}\n\n${accountLine()}` : `I hold nothing – everything is in cash. ${accountLine()}`);
+    }
+    if (/\b(predict|prediction|forecast|outlook|pattern|candle|candlestick|chart|support|resistance|will \w+ (go|rise|fall)|going up|going down)/.test(l)) {
+      const s0 = symIn(), s = s0 && normSym(s0);
+      if (s && st.tickers[s]) return say(predictText(s));
+      const rows = Object.entries(st.tickers).filter(([, t]) => t.pred);
+      if (!rows.length) return say('Predictions appear after the next update – say **update**.');
+      const lean = rows.filter(([, t]) => t.pred.outlook.lean !== 'none');
+      return say(`${lean.length ? `Where today's signals tilt the odds:\n${lean.map(([x, t]) => `- ${sym(x)}: leans ${t.pred.outlook.lean} – ${Math.round(t.pred.outlook.p5 * 100)}% of similar setups rose within a week vs ${Math.round(t.pred.base.h5.up * 100)}% normally (${t.pred.active.map((a) => a.label).slice(0, 2).join(', ')})`).join('\n')}` : 'None of your stocks has signals with a clear edge today.'}\n\n${rows.length - lean.length} stock${rows.length - lean.length === 1 ? '' : 's'} with no clear edge. Ask **predict RELIANCE** for one stock, or open it in the Guide for the candlestick chart.`);
     }
     if (/\b(learn|lesson|rule|brain|smart|avoid)/.test(l)) {
       const R = st.learning.rules, act = Object.entries(R).filter(([, r]) => r.active);
@@ -1264,7 +1376,7 @@
     const s = [];
     if ((train.phase === 'done' && train.summary && !train.summary.taught) || (train.phase === 'repeatDone' && train.rep.good && !train.rep.sum.taught)) s.push('Apply');
     if (E.isPaused(st)) s.push('Resume');
-    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Add 1 lakh', 'Train on the 2008 crisis', 'Train last 5 years until max profit', 'Walk forward last 5 years', 'Evolve on the 2008 crisis', 'Quick mode', 'Train quick last 5 years until max profit', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
+    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Add 1 lakh', 'Train on the 2008 crisis', 'Train last 5 years until max profit', 'Walk forward last 5 years', 'Evolve on the 2008 crisis', 'Predictions', 'Quick mode', 'Train quick last 5 years until max profit', 'Download brain', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
     return s.slice(0, 8);
   }
 
@@ -1302,12 +1414,30 @@
     } else if (kind === 'trainings') {
       rows = [['ran_at_ist', 'label', 'from', 'to', 'brain', 'stocks', 'capital_inr', 'return_pct', 'unseen_new_settings_pct', 'unseen_current_settings_pct', 'settings_found', 'nifty_return_pct', 'max_drawdown_pct', 'trades', 'win_rate_pct', 'pnl_inr', 'taught_live_brain'],
         ...st.trainings.map((x) => [istStamp(Date.parse(x.at)), x.label, x.start, x.end, x.brain, x.stocks, x.capital || '', r2(x.ret), r2(x.unseenBest), r2(x.unseenBase), (x.changes || []).join('; '), r2(x.nret), r2(x.dd), x.trades, r2((x.win || 0) * 100), r2(x.pnl), x.taught ? 'yes' : 'no'])];
+    } else if (kind === 'braincsv') {
+      name = `moli-brain-evidence-${stamp}.csv`;
+      const feats = (f) => (f ? Object.keys(E.FEATURES).filter((k) => f[k]).join('; ') : '');
+      const one = (t, src) => [src, sym(t.sym || ''), E.STRATEGIES[t.s]?.label || t.s, t.e, t.x, r2(t.ret), t.r || '', t.bars ?? '', feats(t.f)];
+      rows = [['source', 'stock', 'strategy', 'entry_date', 'exit_date', 'return_pct', 'exit_reason', 'sessions_held', 'entry_conditions'],
+        ...(st.learning.trained || []).map((t) => one(t, 'training')), ...st.learning.closed.map((t) => one(t, 'lived'))];
+    } else if (kind === 'brain') {
+      name = `moli-brain-${stamp}.json`; mime = 'application/json';
+      const brain = {
+        exported_at: exported, app: 'Moli Trader', what: 'Everything the brain knows: settings, learned rules with evidence, strategy choice per stock, the trades it learned from, its history, training runs and today\'s predictions.',
+        settings: E.brainParams(st), style: E.brainParams(st).quick ? 'quick' : 'normal',
+        rules: Object.fromEntries(Object.entries(E.FEATURES).map(([k, f]) => [k, { condition: f.label, ...(st.learning.rules[k] || {}) }])),
+        strategies: Object.fromEntries(Object.entries(st.tickers).map(([s, t]) => [sym(s), { active: t.active ? E.STRATEGIES[t.active].label : null, scores_sharpe_last_year: Object.fromEntries(Object.entries(t.scores || {}).filter(([, v]) => v != null && !Number.isNaN(v)).map(([k, v]) => [E.STRATEGIES[k].label, Math.round(v * 100) / 100])), next_review_in_sessions: E.brainParams(st).reviewEvery - t.sinceReview }])),
+        predictions: Object.fromEntries(Object.entries(st.tickers).filter(([, t]) => t.pred).map(([s, t]) => { const { chart, ...rest } = t.pred; return [sym(s), rest]; })),
+        evidence: { lived: st.learning.closed, from_training: st.learning.trained || [] },
+        events: st.learning.events, trainings: st.trainings,
+      };
+      return download(name, mime, JSON.stringify(brain, null, 1));
     } else if (kind === 'equity') {
       const idx = returnIndex(st.equity), sidx = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0]));
       rows = [['phase', 'date', 'account_value_inr', 'net_capital_inr', 'return_index', 'nifty_close', 'exported_at'],
         ...st.sim.map((r, i) => ['practice', r[0], r[1], '', r2(sidx[i]), r2(r[2]), exported]),
         ...st.equity.map((r, i) => ['paper', r[0], r[1], r[3], r2(idx[i]), r2(r[2]), exported])];
-    } else if (kind === 'brain') {
+    } else if (kind === 'brainlog') {
       rows = [['market_date', 'recorded_at_ist', 'kind', 'event'], ...st.learning.events.map((e) => [e.date, e.at ? istStamp(Date.parse(e.at)) : '', e.kind, e.text])];
     } else if (kind === 'runs') {
       rows = [['started_at_ist', 'finished_at_ist', 'status', 'sessions_processed', 'from_date', 'to_date', 'message'],
@@ -1383,6 +1513,8 @@
     on('b_reset', () => { const ch = E.applyParams(st, { ...E.BRAIN_DEFAULTS, stopAtr: 3 }, todayIST(), nowIso()); store.save(st); toast(ch.length ? 'Brain settings reset' : 'Already on defaults'); render(); });
     on('m_add', money('add')); on('m_wd', money('withdraw')); on('m_set', money('set'));
     document.querySelectorAll('[data-act]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); const a = b.dataset.act; if (a === 'nexttip') { tipIdx++; return render(); } doAct(a); }; });
+    document.querySelectorAll('[data-stock]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); openStock(b.dataset.stock); }; });
+    document.querySelectorAll('[data-ask]').forEach((b) => { b.onclick = () => { tab = 'chat'; render(); send(b.dataset.ask); }; });
     document.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => { tab = b.dataset.go; render(); window.scrollTo(0, 0); }; });
     const nmi = $('set_name'); if (nmi) nmi.onchange = () => { st.cfg.name = nmi.value.trim().slice(0, 30); store.save(st); toast('Saved'); };
     const rem = $('s_rem');
@@ -1390,13 +1522,13 @@
   }
   function bindPick() { document.querySelectorAll('#pick [data-add]').forEach((b) => { b.onclick = () => addStock(b.dataset.add); }); }
 
-  const NAV = { home: 'home', activity: 'activity', train: 'train', guide: 'guide', stocks: 'home', settings: 'home', chat: '' };
+  const NAV = { home: 'home', activity: 'activity', train: 'train', guide: 'guide', stocks: 'home', settings: 'home', chat: '', stock: '' };
   function render() {
     document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === NAV[tab]));
     $('tabs').style.display = st ? '' : 'none';
     $('fab').style.display = st ? '' : 'none';
     document.body.classList.toggle('chat', !!st && tab === 'chat');
-    const pages = { home: viewHome, activity: viewActivity, train: viewTrain, guide: viewGuide, stocks: () => pageHead('Stocks', `${st.cfg.tickers.length} in your list`, 'home') + viewStocks(), settings: viewSettings, chat: viewChat };
+    const pages = { home: viewHome, activity: viewActivity, train: viewTrain, guide: viewGuide, stocks: () => pageHead('Stocks', `${st.cfg.tickers.length} in your list`, 'home') + viewStocks(), settings: viewSettings, chat: viewChat, stock: viewStock };
     const page = !st ? viewSetup() : (pages[tab] || viewHome)();
     const note = `<p class="note">Paper trading only – simulated, not investment advice. SEBI found 87.7% of individual F&amp;O traders lost money in FY26.</p>`;
     $('view').innerHTML = page + (tab === 'chat' && st ? '' : note);

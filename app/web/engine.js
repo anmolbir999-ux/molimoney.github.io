@@ -736,6 +736,167 @@
     return ch;
   }
 
+  // ------------------------------------------------------------------ predictions: candles, chart patterns, trend
+  // Every signal is scored against the stock's OWN history: how often was the price higher
+  // H sessions later when this signal appeared, compared with any normal day? No edge → we say so.
+  const SIGNALS = {
+    // candlestick patterns
+    doji: { label: 'Doji', kind: 'candle', dir: 'neutral', what: 'Open ≈ close: buyers and sellers tied – indecision' },
+    hammer: { label: 'Hammer', kind: 'candle', dir: 'bull', what: 'Long lower shadow after a fall: sellers pushed down, buyers pushed back' },
+    hanging_man: { label: 'Hanging man', kind: 'candle', dir: 'bear', what: 'Hammer shape after a rise: selling showed up in an uptrend' },
+    shooting_star: { label: 'Shooting star', kind: 'candle', dir: 'bear', what: 'Long upper shadow after a rise: buyers pushed up and were rejected' },
+    bull_engulfing: { label: 'Bullish engulfing', kind: 'candle', dir: 'bull', what: 'A green body swallowed the previous red one after a fall' },
+    bear_engulfing: { label: 'Bearish engulfing', kind: 'candle', dir: 'bear', what: 'A red body swallowed the previous green one after a rise' },
+    morning_star: { label: 'Morning star', kind: 'candle', dir: 'bull', what: 'Big red → small pause → strong green: a three-day bottom' },
+    evening_star: { label: 'Evening star', kind: 'candle', dir: 'bear', what: 'Big green → small pause → strong red: a three-day top' },
+    // chart patterns
+    breakout: { label: 'Breakout above 20-day high', kind: 'chart', dir: 'bull', what: 'Closed above the highest price of the last 20 sessions' },
+    breakdown: { label: 'Breakdown below 20-day low', kind: 'chart', dir: 'bear', what: 'Closed below the lowest price of the last 20 sessions' },
+    near_support: { label: 'Sitting on support', kind: 'chart', dir: 'bull', what: 'Within 2% of a level where falls stopped before' },
+    near_resistance: { label: 'Under resistance', kind: 'chart', dir: 'bear', what: 'Within 2% of a level where rallies stopped before' },
+    double_bottom: { label: 'Double bottom', kind: 'chart', dir: 'bull', what: 'Two similar lows with a bounce between, now rising past the bounce' },
+    double_top: { label: 'Double top', kind: 'chart', dir: 'bear', what: 'Two similar highs with a dip between, now falling past the dip' },
+    squeeze: { label: 'Squeeze (narrowing range)', kind: 'chart', dir: 'neutral', what: 'Bollinger bands at their tightest in 6 months – a big move often follows, direction unknown' },
+    golden_cross: { label: 'Golden cross', kind: 'chart', dir: 'bull', what: '50-day average crossed above the 200-day in the last week' },
+    death_cross: { label: 'Death cross', kind: 'chart', dir: 'bear', what: '50-day average crossed below the 200-day in the last week' },
+    // trend & momentum
+    uptrend: { label: 'Strong uptrend', kind: 'trend', dir: 'bull', what: 'Price > 20-day > 50-day > 200-day average' },
+    downtrend: { label: 'Strong downtrend', kind: 'trend', dir: 'bear', what: 'Price < 20-day < 50-day < 200-day average' },
+    rsi_oversold: { label: 'RSI oversold (< 30)', kind: 'trend', dir: 'bull', what: 'Fell fast – often bounces, but can keep falling in a downtrend' },
+    rsi_overbought: { label: 'RSI overbought (> 70)', kind: 'trend', dir: 'bear', what: 'Rose fast – often pauses, but can stay high in a strong trend' },
+    macd_up: { label: 'MACD turned up', kind: 'trend', dir: 'bull', what: 'MACD crossed above its signal line today' },
+    macd_down: { label: 'MACD turned down', kind: 'trend', dir: 'bear', what: 'MACD crossed below its signal line today' },
+  };
+
+  /** Signal flags for every bar of an adjusted OHLCV series. */
+  function signalMatrix(b) {
+    const n = b.c.length, F = {};
+    for (const k in SIGNALS) F[k] = new Array(n).fill(false);
+    const s20 = sma(b.c, 20), s50 = sma(b.c, 50), s200 = sma(b.c, 200), r = rsi(b.c, 14), m = macd(b.c);
+    const mid = s20, sd = rollStd(b.c, 20), bw = mid.map((x, i) => (x ? (4 * sd[i]) / x : NaN));
+    const hi20 = rollPrev(b.h, 20, (w) => Math.max(...w)), lo20 = rollPrev(b.l, 20, (w) => Math.min(...w));
+    const body = b.c.map((c, i) => c - b.o[i]), ab = body.map(Math.abs);
+    const avgB = sma(ab, 10);
+    for (let i = 1; i < n; i++) {
+      const o = b.o[i], h = b.h[i], l = b.l[i], c = b.c[i], rng = h - l || 1e-9;
+      const up = h - Math.max(o, c), lo = Math.min(o, c) - l;
+      const down5 = i >= 6 && b.c[i - 1] < b.c[i - 6], up5 = i >= 6 && b.c[i - 1] > b.c[i - 6];
+      F.doji[i] = ab[i] <= 0.1 * rng;
+      const hammerShape = lo >= 2 * ab[i] && up <= 0.15 * rng && ab[i] > 0.03 * rng;
+      F.hammer[i] = hammerShape && down5; F.hanging_man[i] = hammerShape && up5;
+      F.shooting_star[i] = up >= 2 * ab[i] && lo <= 0.15 * rng && up5;
+      const po = b.o[i - 1], pc = b.c[i - 1];
+      F.bull_engulfing[i] = pc < po && c > o && o <= pc && c >= po && down5;
+      F.bear_engulfing[i] = pc > po && c < o && o >= pc && c <= po && up5;
+      if (i >= 2) {
+        const b2 = body[i - 2], b1 = body[i - 1], big2 = Math.abs(b2) > (avgB[i - 2] || Infinity), small1 = Math.abs(b1) < 0.5 * Math.abs(b2), mid2 = (b.o[i - 2] + b.c[i - 2]) / 2;
+        F.morning_star[i] = b2 < 0 && big2 && small1 && body[i] > 0 && c > mid2;
+        F.evening_star[i] = b2 > 0 && big2 && small1 && body[i] < 0 && c < mid2;
+      }
+      F.breakout[i] = c > hi20[i]; F.breakdown[i] = c < lo20[i];
+      if (i >= 60) {
+        const wl = b.l.slice(i - 60, i - 3), wh = b.h.slice(i - 60, i - 3), sup = Math.min(...wl), res = Math.max(...wh);
+        F.near_support[i] = c >= sup && (c - sup) / c < 0.02;
+        F.near_resistance[i] = c <= res && (res - c) / c < 0.02;
+      }
+      if (i >= 40) { // two similar lows/highs in the last 40 sessions, separated by a bounce/dip, price now past it
+        const a = i - 40, L1 = Math.min(...b.l.slice(a, a + 20)), L2 = Math.min(...b.l.slice(a + 20, i - 1));
+        const H1 = Math.max(...b.h.slice(a, a + 20)), H2 = Math.max(...b.h.slice(a + 20, i - 1));
+        const midHi = Math.max(...b.h.slice(a + 10, i - 10)), midLo = Math.min(...b.l.slice(a + 10, i - 10));
+        F.double_bottom[i] = Math.abs(L1 - L2) / L1 < 0.02 && midHi > L1 * 1.04 && c > midHi && b.c[i - 1] <= midHi;
+        F.double_top[i] = Math.abs(H1 - H2) / H1 < 0.02 && midLo < H1 * 0.96 && c < midLo && b.c[i - 1] >= midLo;
+      }
+      if (i >= 126 && !isn(bw[i])) { let mn = Infinity; for (let k = i - 125; k < i; k++) if (!isn(bw[k])) mn = Math.min(mn, bw[k]); F.squeeze[i] = bw[i] <= mn; }
+      if (i >= 5 && !isn(s200[i])) for (let k = i - 4; k <= i; k++) { if (s50[k] > s200[k] && s50[k - 1] <= s200[k - 1]) F.golden_cross[i] = true; if (s50[k] < s200[k] && s50[k - 1] >= s200[k - 1]) F.death_cross[i] = true; }
+      F.uptrend[i] = c > s20[i] && s20[i] > s50[i] && s50[i] > s200[i];
+      F.downtrend[i] = c < s20[i] && s20[i] < s50[i] && s50[i] < s200[i];
+      F.rsi_oversold[i] = r[i] < 30; F.rsi_overbought[i] = r[i] > 70;
+      F.macd_up[i] = m.line[i] > m.signal[i] && m.line[i - 1] <= m.signal[i - 1];
+      F.macd_down[i] = m.line[i] < m.signal[i] && m.line[i - 1] >= m.signal[i - 1];
+    }
+    return { F, s20, s50, s200 };
+  }
+
+  function fwdStats(c, mask, H) {
+    let n = 0, up = 0, sum = 0;
+    for (let i = 200; i + H < c.length; i++) if (!mask || mask[i]) { const r = c[i + H] / c[i] - 1; n++; sum += r; if (r > 0) up++; }
+    return { n, up: n ? up / n : NaN, avg: n ? (sum / n) * 100 : NaN };
+  }
+
+  /** Horizontal support/resistance: cluster swing highs/lows that price touched repeatedly. */
+  function srLevels(b, look = 250, win = 8, tol = 0.015) {
+    const n = b.c.length, a = Math.max(win, n - look), pts = [];
+    for (let i = a; i < n - win; i++) {
+      let isH = true, isL = true;
+      for (let k = i - win; k <= i + win; k++) { if (b.h[k] > b.h[i]) isH = false; if (b.l[k] < b.l[i]) isL = false; }
+      if (isH) pts.push(b.h[i]); if (isL) pts.push(b.l[i]);
+    }
+    pts.sort((x, y) => x - y);
+    const cl = [];
+    for (const p of pts) { const last = cl[cl.length - 1]; if (last && Math.abs(p - last.v / last.n) / p <= tol) { last.v += p; last.n++; } else cl.push({ v: p, n: 1 }); }
+    const price = b.c[n - 1];
+    const lv = cl.filter((x) => x.n >= 2).map((x) => ({ level: x.v / x.n, touches: x.n }));
+    const sup = lv.filter((x) => x.level < price).sort((x, y) => y.level - x.level).slice(0, 2);
+    const res = lv.filter((x) => x.level > price).sort((x, y) => x.level - y.level).slice(0, 2);
+    return { sup, res };
+  }
+
+  /**
+   * Trend projection: least-squares slope of log prices over the last `look` sessions, started from
+   * today's price; the range widens with time using the stock's recent daily volatility (90% band).
+   */
+  function projection(c, look = 60, ahead = 10) {
+    const y = c.slice(-look).map(Math.log), n = y.length, xm = (n - 1) / 2, ym = y.reduce((s, v) => s + v, 0) / n;
+    let sxy = 0, sxx = 0; y.forEach((v, i) => { sxy += (i - xm) * (v - ym); sxx += (i - xm) ** 2; });
+    const slope = sxy / sxx, icp = ym - slope * xm;
+    const res = y.map((v, i) => v - (icp + slope * i)), sst = y.reduce((s, v) => s + (v - ym) ** 2, 0);
+    const r2 = sst ? 1 - res.reduce((s, v) => s + v * v, 0) / sst : 0;
+    const dr = y.slice(1).map((v, i) => v - y[i]), dm = dr.reduce((s, v) => s + v, 0) / dr.length;
+    const sdD = Math.sqrt(dr.reduce((s, v) => s + (v - dm) ** 2, 0) / (dr.length - 1));
+    const p0 = c[c.length - 1];
+    const path = [], lo = [], hi = [];
+    for (let k = 0; k <= ahead; k++) { const m = p0 * Math.exp(slope * k), w = 1.64 * sdD * Math.sqrt(k); path.push(m); lo.push(m * Math.exp(-w)); hi.push(m * Math.exp(w)); }
+    return { slopePct: (Math.exp(slope) - 1) * 100, r2, end: path[ahead], lo: lo[ahead], hi: hi[ahead], path, loPath: lo, hiPath: hi, look, ahead, volPct: sdD * 100 };
+  }
+
+  /**
+   * Predictions for one stock from its raw (split-adjusted) bars. Returns a compact object
+   * stored with the account: today's signals with their historical odds, an overall lean,
+   * S/R levels, a trend projection and the last 80 candles for drawing.
+   */
+  function predict(raw, opts = {}) {
+    const f = raw.c.map((c, i) => raw.ac[i] / c);
+    const b = { o: raw.o.map((x, i) => x * f[i]), h: raw.h.map((x, i) => x * f[i]), l: raw.l.map((x, i) => x * f[i]), c: raw.ac.slice(), v: raw.v, d: raw.d };
+    const n = b.c.length; if (n < 260) return null;
+    const { F, s20, s50 } = signalMatrix(b);
+    const base5 = fwdStats(b.c, null, 5), base20 = fwdStats(b.c, null, 20);
+    const last = n - 1, active = [], recent = [];
+    for (const k in SIGNALS) {
+      const s5 = fwdStats(b.c, F[k], 5), s20s = fwdStats(b.c, F[k], 20), meta = SIGNALS[k];
+      const row = { key: k, label: meta.label, kind: meta.kind, dir: meta.dir, what: meta.what, h5: s5, h20: s20s };
+      if (F[k][last]) active.push(row);
+      else if (meta.kind === 'candle') { for (let j = last - 1; j >= last - 9; j--) if (F[k][j]) { recent.push({ ...row, date: b.d[j], ago: last - j, after: (b.c[last] / b.c[j] - 1) * 100 }); break; } }
+    }
+    // overall lean: odds of being higher in 5 sessions, from signals with enough history (weighted by sample size)
+    const usable = active.filter((s) => s.h5.n >= 8);
+    let p = base5.up, wsum = 0, acc = 0;
+    usable.forEach((s) => { const w = Math.sqrt(s.h5.n); acc += w * (s.h5.up - base5.up); wsum += w; });
+    if (wsum) p = base5.up + acc / wsum;
+    const edge = (p - base5.up) * 100, nTot = usable.reduce((s, x) => s + x.h5.n, 0);
+    const lean = !usable.length || Math.abs(edge) < 3 || nTot < 20 ? 'none' : edge > 0 ? 'up' : 'down';
+    const strength = lean === 'none' ? 'no clear edge' : Math.abs(edge) >= 8 && nTot >= 60 ? 'moderate' : 'slight';
+    const K = Math.min(80, n), sl = (a) => a.slice(n - K).map((x) => (x == null || isn(x) ? null : Math.round(x * 100) / 100));
+    const marks = [];
+    for (let j = n - K; j < n; j++) for (const k in SIGNALS) if (SIGNALS[k].kind === 'candle' && SIGNALS[k].dir !== 'neutral' && F[k][j]) marks.push({ i: j - (n - K), dir: SIGNALS[k].dir, key: k });
+    return {
+      asOf: b.d[last], price: b.c[last], change: (b.c[last] / b.c[last - 1] - 1) * 100, years: Math.round((n / 252) * 10) / 10,
+      base: { h5: base5, h20: base20 }, active, recent: recent.sort((x, y) => x.ago - y.ago).slice(0, 4),
+      outlook: { p5: p, edge, lean, strength, n: nTot },
+      levels: srLevels(b), proj: projection(b.c, 60, 10),
+      chart: { d: b.d.slice(n - K), o: sl(b.o), h: sl(b.h), l: sl(b.l), c: sl(b.c), s20: sl(s20), s50: sl(s50), marks },
+    };
+  }
+
   /** Why a closed losing trade went wrong, in plain words. */
   function diagnose(tr) {
     const tags = [];
@@ -759,6 +920,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
+    predict, SIGNALS, signalMatrix,
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach,
     adjustCapital, netCapital, cashTotal };
