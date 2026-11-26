@@ -36,6 +36,12 @@ public class Bridge implements Runnable {
         new Thread(new HttpTask(activity, web, id, url)).start();
     }
 
+    /** Let the user pick a file; its text comes back through window.__resolve(id, ok, text). */
+    @JavascriptInterface
+    public void pickFile(String id) {
+        if (activity instanceof MainActivity) activity.runOnUiThread(new PickFile((MainActivity) activity, id));
+    }
+
     @JavascriptInterface
     public String load() {
         File f = new File(activity.getFilesDir(), "state.json");

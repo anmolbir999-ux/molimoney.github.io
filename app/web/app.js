@@ -279,6 +279,7 @@
       <div class="row"><div><b>Daily equity</b><div class="m">Date, account value, capital, return, Nifty</div></div><button class="btn sm" data-dl="equity">CSV</button></div>
       <div class="row"><div><b>Brain log</b><div class="m">Every switch, lesson and action, with timestamps</div></div><button class="btn sm" data-dl="brainlog">CSV</button></div>
       <div class="row"><div><b>Brain data</b><div class="m">Settings, learned rules with evidence, strategy per stock, predictions, training runs – everything it knows</div></div><button class="btn sm" data-dl="brain">JSON</button></div>
+      <div class="row"><div><b>Import brain data</b><div class="m">Load a brain file (or restore a full backup) – e.g. from another phone or before a reinstall</div></div><button class="btn sm ghost" data-act="import">Import</button></div>
       <div class="row"><div><b>Brain evidence</b><div class="m">Every trade the brain learned from (lived and from training), with entry conditions</div></div><button class="btn sm" data-dl="braincsv">CSV</button></div>
       <div class="row"><div><b>Update history</b><div class="m">When each update ran, what it processed, stopped or failed</div></div><button class="btn sm" data-dl="runs">CSV</button></div>
       <div class="row"><div><b>Training runs</b><div class="m">Every past-period training: dates, return vs Nifty, drawdown, trades</div></div><button class="btn sm" data-dl="trainings">CSV</button></div>
@@ -399,6 +400,7 @@
     if (a === 'chat') { tab = 'chat'; render(); return scrollEnd(); }
     if (a === 'settings') { tab = 'settings'; render(); return window.scrollTo(0, 0); }
     if (a === 'wrapped') return openWrapped();
+    if (a === 'import') return startImport();
     if (a === 'quick-on' || a === 'quick-off') { setStyle(a === 'quick-on'); toast(a === 'quick-on' ? 'Quick trading on' : 'Normal trading on'); return render(); }
     if (a === 'train' || a === 'train-walk') { if (a === 'train-walk') Object.assign(train, { phase: 'setup', mode: 'repeat', route: 'walk', preset: '5y' }); tab = 'train'; render(); return window.scrollTo(0, 0); }
     if (a.startsWith('add:')) return addStock(a.slice(4));
@@ -482,11 +484,11 @@
       const ini = sym(t.sym).replace(/[^A-Z]/g, '').slice(0, 3);
       if (k === 'buy') {
         const r = open && last ? (last / t.ep - 1) * 100 : null;
-        return head + `<div class="tx"><span class="badge open">${ini}</span><div class="mid"><b>Bought ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${t.q} @ ${px(t.ep)} · ${esc(E.STRATEGIES[t.s]?.label || '')}</div></div><div class="r">${open ? `<b class="${cls(r)}">${pct(r)}</b><div class="m">holding</div>` : `<span class="m">${inr(t.ep * t.q)}</span>`}</div></div>`;
+        return head + `<div class="stx"><span class="badge open">${ini}</span><div class="mid"><b>Bought ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${t.q} @ ${px(t.ep)} · ${esc(E.STRATEGIES[t.s]?.label || '')}</div></div><div class="r">${open ? `<b class="${cls(r)}">${pct(r)}</b><div class="m">holding</div>` : `<span class="m">${inr(t.ep * t.q)}</span>`}</div></div>`;
       }
       const tags = t.pnl <= 0 ? `<div class="m" style="margin-top:3px">${esc(E.diagnose(t)[0])}</div>` : '';
       const why = t.r === 'stop' ? 'stop-loss' : t.r === 'target' ? 'profit target' : t.r === 'time' ? 'time limit' : 'signal';
-      return head + `<div class="tx"><span class="badge ${t.pnl > 0 ? 'win' : ''}">${ini}</span><div class="mid"><b>Sold ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${why} · held ${t.bars || 0}d</div>${tags}</div><div class="r"><b class="${cls(t.pnl)}">${t.pnl > 0 ? '+' : ''}${inr(t.pnl)}</b><div class="m">${pct(t.ret)}</div></div></div>`;
+      return head + `<div class="stx"><span class="badge ${t.pnl > 0 ? 'win' : ''}">${ini}</span><div class="mid"><b>Sold ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${why} · held ${t.bars || 0}d</div>${tags}</div><div class="r"><b class="${cls(t.pnl)}">${t.pnl > 0 ? '+' : ''}${inr(t.pnl)}</b><div class="m">${pct(t.ret)}</div></div></div>`;
     }).join('');
     h += rows ? rows + '</div>' : `<div class="card"><p class="empty">No trades yet. I only buy when a strategy I trust gives a fresh signal.</p></div>`;
     return h;
@@ -543,7 +545,7 @@
     let h = pageHead('Settings', '', 'home');
     h += `<div class="card"><div class="lbl">Name</div><input id="set_name" value="${esc(st.cfg.name || '')}" placeholder="Your name" autocomplete="off"></div>`;
     h += `<a class="card" style="display:flex;align-items:center;gap:12px" data-act="stocks"><div style="flex:1"><div class="lbl">Stocks</div><div class="serif" style="font-size:20px;margin-top:4px">${st.cfg.tickers.length} in your list</div><div class="m">${st.cfg.tickers.slice(0, 6).map(sym).join(', ')}${st.cfg.tickers.length > 6 ? '…' : ''}</div></div><span class="m" style="font-size:22px">›</span></a>`;
-    if (N && N.canRemind && N.canRemind()) h += `<div class="card"><div class="setrow"><div class="tx"><h3>Daily reminder</h3><div class="m">A nudge at 4:15 PM on weekdays to update and see what I did.</div></div><input type="checkbox" class="tog" id="s_rem" ${N.reminderOn() ? 'checked' : ''}></div></div>`;
+    if (N && N.canRemind && N.canRemind()) h += `<div class="card"><div class="setrow"><div class="stx"><h3>Daily reminder</h3><div class="m">A nudge at 4:15 PM on weekdays to update and see what I did.</div></div><input type="checkbox" class="tog" id="s_rem" ${N.reminderOn() ? 'checked' : ''}></div></div>`;
     return h + viewMore();
   }
 
@@ -605,6 +607,7 @@
       [q ? 'quick-off' : 'quick-on', q ? '〰' : '⚡', q ? 'Switch to normal trading' : 'Switch to quick trading', q ? 'Ride trends for weeks' : 'In and out within days'],
       [paused ? 'resume' : 'pause', paused ? '▶' : '❚❚', paused ? 'Resume trading' : 'Pause new buys', paused ? 'Start buying again' : 'Keep positions, stop buying'],
       ['wrapped', '✳', 'Today, wrapped', 'Your trading day in a few taps'],
+      ['import', '⇪', 'Import brain data', 'Load a brain file or restore a backup'],
     ];
     $('sheet').innerHTML = `<div class="grab"></div><h2>What next?</h2>` + items.map(([a, ic, t, s]) => `<button class="act" data-sa="${a}"><span class="ic">${ic}</span><span><b>${t}</b><span>${s}</span></span></button>`).join('');
     $('sheet').querySelectorAll('[data-sa]').forEach((b) => { b.onclick = () => { closeSheet(); doAct(b.dataset.sa); }; });
@@ -709,6 +712,61 @@
     return `**${sym(s)}** ${px(P.price)} (${pct(P.change, 2)} on ${fdate(P.asOf)}). **${leanText(o)}**: a normal week ends higher ${Math.round(P.base.h5.up * 100)}% of the time; ${o.lean === 'none' ? "today's signals don't change that much" : `after setups like today's it was ${Math.round(o.p5 * 100)}% (${o.n} past cases)`}.` +
       (P.active.length ? `\n\nToday's signals:\n${P.active.map((x) => `- ${x.label}: higher a week later ${Number.isNaN(x.h5.up) ? '–' : Math.round(x.h5.up * 100) + '%'} of ${x.h5.n} times`).join('\n')}` : '\n\nNo candle or chart pattern today.') +
       `\n\nTrend cone for 2 weeks: about ${px(P.proj.end)} (likely ${px(P.proj.lo)}–${px(P.proj.hi)}).${P.levels.res[0] ? ` Resistance ${px(P.levels.res[0].level)}.` : ''}${P.levels.sup[0] ? ` Support ${px(P.levels.sup[0].level)}.` : ''}\n\nOdds from this stock's last ${P.years} years – not a promise.`;
+  }
+
+
+  // ---------------------------------------------------------------- import brain / restore backup
+  /** Let the user pick a file and return its text (Android picker, or a browser file input). */
+  function pickFile() {
+    if (N && N.pickFile) return new Promise((res, rej) => { const id = 'f' + ++seq; waiting[id] = { res, rej }; N.pickFile(id); });
+    return new Promise((res, rej) => {
+      const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json'; inp.style.display = 'none';
+      inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return rej(new Error('cancelled')); const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(new Error('Could not read the file')); r.readAsText(f); inp.remove(); };
+      document.body.appendChild(inp); inp.click();
+    });
+  }
+  let pendingImport = null;
+  async function startImport() {
+    let text;
+    try { text = await pickFile(); } catch (e) { if (e.message !== 'cancelled') toast(e.message); return; }
+    let obj; try { obj = JSON.parse(text); } catch (e) { return say('That file isn\'t a Moli brain or backup (it isn\'t valid JSON).') || toast('Not a Moli file'); }
+    const b = E.readBrain(obj);
+    if (b.error) { toast(b.error); return say(`I couldn't import that: ${b.error}. Use a **Brain data** (moli-brain-…json) or **Full backup** (moli-backup-…json) file from Data & settings.`); }
+    pendingImport = b; showImportSheet();
+  }
+  function showImportSheet() {
+    const b = pendingImport, opts = pendingImport.opts || (pendingImport.opts = { settings: true, evidence: true });
+    let h = `<div class="grab"></div>`;
+    if (b.kind === 'backup') {
+      const s2 = b.state, eqs = Object.values(s2.tickers || {}).reduce((a, t) => a + (t.live ? t.live.cash + t.live.qty * (t.lastClose || 0) : 0), 0);
+      h += `<h2>Restore a backup?</h2><div class="says" style="margin:0 0 6px">${buddy(56, 'thinking')}<div class="bub"><div class="lbl">Backup${b.exported ? ' · ' + esc(b.exported) : ''}</div><h3>${(s2.cfg.tickers || []).length} stocks · ${inr(eqs)}</h3><p>Paper trading since ${fdate(s2.paperStart)}, data to ${fdate(s2.lastDate)}. Restoring <b>replaces</b> your current account and everything I learned. Download a backup of the current one first if you want to keep it.</p></div></div>
+        <div class="actions"><button class="btn" id="imp_restore">Replace &amp; restore</button><button class="btn ghost" id="imp_cancel">Cancel</button></div>`;
+    } else {
+      const pv = E.previewImport(st, b, opts, todayIST()), cur = E.brainParams(st);
+      const ch = b.settings ? E.describeParams(b.settings, cur) : [];
+      h += `<h2>Import brain data</h2><div class="says" style="margin:0 0 10px">${buddy(56, 'thinking')}<div class="bub"><div class="lbl">Brain file${b.exported ? ' · ' + esc(b.exported) : ''}</div><h3>${b.evidence.length} learned trades${b.settings ? ' + settings' : ''}</h3><p>${b.rules.length ? `It was avoiding: ${b.rules.map((k) => E.FEATURES[k].label.toLowerCase()).join('; ')}.` : 'It had no avoid-rules switched on.'}${b.trainings.length ? ` ${b.trainings.length} training runs.` : ''}</p></div></div>
+        <div class="card" style="margin-bottom:10px"><div class="setrow"><div class="stx"><h3 style="font-size:18px">Use its settings</h3><div class="m">${!b.settings ? 'Not in this file.' : ch.length ? ch.map(esc).join(' · ') : 'Same as mine.'}</div></div><input type="checkbox" class="tog" id="imp_set" ${opts.settings && b.settings ? 'checked' : ''} ${b.settings ? '' : 'disabled'}></div></div>
+        <div class="card" style="margin-bottom:10px"><div class="setrow"><div class="stx"><h3 style="font-size:18px">Add what it learned</h3><div class="m">${pv.added} new trades join my evidence (${b.evidence.length - pv.added} I already had).${pv.newRules.length || pv.dropped.length ? ` I'd ${[...pv.newRules.map((k) => 'start avoiding ' + E.FEATURES[k].label.toLowerCase()), ...pv.dropped.map((k) => 'stop avoiding ' + E.FEATURES[k].label.toLowerCase())].join(', ')}.` : ' My rules wouldn\'t change.'}</div></div><input type="checkbox" class="tog" id="imp_ev" ${opts.evidence ? 'checked' : ''}></div></div>
+        <p class="m" style="margin:4px 2px 0">Your paper money, stocks and trades stay as they are. Strategy choices per stock are re-learned from your own data.</p>
+        <div class="actions"><button class="btn" id="imp_go">Import</button><button class="btn ghost" id="imp_cancel">Cancel</button></div>`;
+    }
+    $('sheet').innerHTML = h; $('sheet').classList.add('open'); $('sheetScrim').classList.add('open');
+    const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    on('imp_cancel', () => { pendingImport = null; closeSheet(); });
+    const cs = $('imp_set'), ce = $('imp_ev');
+    if (cs) cs.onchange = () => { opts.settings = cs.checked; showImportSheet(); };
+    if (ce) ce.onchange = () => { opts.evidence = ce.checked; showImportSheet(); };
+    on('imp_go', () => {
+      if (!opts.settings && !opts.evidence) return toast('Pick at least one');
+      const r = E.importBrain(st, b, opts, todayIST(), nowIso()); store.save(st); pendingImport = null; closeSheet(); render();
+      toast('Brain imported');
+      say(`Imported the brain file.${r.changes.length ? `\n\nNow using its settings:\n${r.changes.map((c) => '- ' + c).join('\n')}` : ''}${opts.evidence ? `\n\nAdded ${r.added} trades to my evidence.${r.newRules.length ? ` Now avoiding: ${r.newRules.map((k) => E.FEATURES[k].label.toLowerCase()).join('; ')}.` : ''}${r.dropped.length ? ` No longer avoiding: ${r.dropped.map((k) => E.FEATURES[k].label.toLowerCase()).join('; ')}.` : ''}` : ''}\n\nSay **reset brain** to go back to the default settings.`);
+    });
+    on('imp_restore', () => {
+      if (!confirm('Replace your current paper account with this backup?')) return;
+      st = E.migrate(JSON.parse(JSON.stringify(b.state))); store.save(st); pendingImport = null; closeSheet(); tab = 'home'; render();
+      toast('Backup restored'); say(`Restored the backup: ${st.cfg.tickers.length} stocks, paper trading since ${fdate(st.paperStart)}. Say **update** to catch up on the days since ${fdate(st.lastDate)}.`);
+    });
   }
 
   // ---------------------------------------------------------------- training on the past
@@ -1233,7 +1291,7 @@
   }
 
   // what Moli understands
-  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons", "with 10 lakh", "until max profit", "30 rounds", "evolution", "walk forward"), **apply** what it learned, show or **reset brain** settings, **quick mode** / **normal mode** (in and out fast vs ride trends; **take profit at 2 ATR**, **time limit 5 days**, **stop-loss 1.5 ATR**, **train quick last 5 years**), **teach**, say when the **market opens**, and **predict RELIANCE** (candlestick, chart-pattern and trend odds), **download trades** (or equity, brain data, brain evidence, brain log, history, backup).';
+  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons", "with 10 lakh", "until max profit", "30 rounds", "evolution", "walk forward"), **apply** what it learned, show or **reset brain** settings, **quick mode** / **normal mode** (in and out fast vs ride trends; **take profit at 2 ATR**, **time limit 5 days**, **stop-loss 1.5 ATR**, **train quick last 5 years**), **teach**, say when the **market opens**, and **predict RELIANCE** (candlestick, chart-pattern and trend odds), **download trades** (or equity, brain data, brain evidence, brain log, history, backup), **import brain** (or restore a backup).';
   async function respond(text) {
     const q = text.trim(), l = q.toLowerCase();
     const known = new Set([...Object.values(CATALOG).flat(), ...st.cfg.tickers.map(sym)]);
@@ -1326,6 +1384,10 @@
       const T = st.tickers[s]; const gone = E.removeTicker(st, s, todayIST(), nowIso()); store.save(st);
       return say(gone ? `Removed ${sym(s)}; its ${inr(T ? T.live.cash : st.slice)} is withdrawn.` : `I'll sell ${sym(s)} at the next open, then remove it.`);
     }
+    if (/\b(import|load|restore|upload)\b/.test(l) && /\b(brain|backup|data|file|settings)\b/.test(l)) {
+      say('Pick the brain or backup file – I\'ll show you what\'s in it before changing anything.');
+      return startImport();
+    }
     if (/\b(download|export|save)\b/.test(l)) {
       const k = /equity|value|daily/.test(l) ? 'equity' : /evidence/.test(l) ? 'braincsv' : /brain/.test(l) && !/log/.test(l) ? 'brain' : /log|event/.test(l) ? 'brainlog' : /history|update|run/.test(l) ? 'runs' : /backup|everything|all|json/.test(l) ? 'backup' : /training/.test(l) ? 'trainings' : 'trades';
       exportData(k); return say(`Saved the ${({ trades: 'trades', equity: 'daily equity', brain: 'brain data', braincsv: 'brain evidence', brainlog: 'brain log', runs: 'update history', backup: 'full backup', trainings: 'training runs' })[k]} file${N ? ' to Downloads/Moli' : ''}.`);
@@ -1376,7 +1438,7 @@
     const s = [];
     if ((train.phase === 'done' && train.summary && !train.summary.taught) || (train.phase === 'repeatDone' && train.rep.good && !train.rep.sum.taught)) s.push('Apply');
     if (E.isPaused(st)) s.push('Resume');
-    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Add 1 lakh', 'Train on the 2008 crisis', 'Train last 5 years until max profit', 'Walk forward last 5 years', 'Evolve on the 2008 crisis', 'Predictions', 'Quick mode', 'Train quick last 5 years until max profit', 'Download brain', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
+    s.push('How am I doing?', 'Update', 'What have you learned?', 'Positions', 'Add 1 lakh', 'Train on the 2008 crisis', 'Train last 5 years until max profit', 'Walk forward last 5 years', 'Evolve on the 2008 crisis', 'Predictions', 'Quick mode', 'Train quick last 5 years until max profit', 'Download brain', 'Import brain', 'Mistakes', 'When does the market open?', 'Pause', 'Help');
     return s.slice(0, 8);
   }
 

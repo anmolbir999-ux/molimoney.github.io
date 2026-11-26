@@ -105,7 +105,7 @@ input:focus{border-color:var(--clay)}
 .tog:checked{background:var(--clay)}
 .tog:checked::after{left:26px;top:6px;width:20px;height:20px;background:var(--on-clay)}
 .setrow{display:flex;align-items:flex-start;gap:14px}
-.setrow .tx{flex:1}
+.setrow .stx{flex:1}
 .setrow h3{font-family:var(--serif);font-weight:400;font-size:21px;margin:0 0 4px}
 
 /* trade rows (Activity) */
