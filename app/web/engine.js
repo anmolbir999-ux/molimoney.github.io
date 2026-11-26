@@ -1147,6 +1147,23 @@
     };
   }
 
+  /** Bars up to and including `date` (no look-ahead). */
+  function barsUpTo(raw, date) {
+    let k = raw.d.length; while (k > 0 && raw.d[k - 1] > date) k--;
+    const o = {}; for (const key of ['d', 'o', 'h', 'l', 'c', 'v', 'ac']) if (raw[key]) o[key] = raw[key].slice(0, k);
+    return o;
+  }
+  /** Predictions exactly as they would have looked at the close of `date`. */
+  function predictAt(raw, nifty, date) {
+    const b = barsUpTo(raw, date); if (b.d.length < 260) return null;
+    return predict(b, { nifty: nifty ? barsUpTo(nifty, date) : null });
+  }
+  /** Adjusted closes after `from`, up to `upTo`, at most `max` of them – what really happened next. */
+  function closesAfter(raw, from, upTo, max = 10) {
+    const out = []; for (let i = 0; i < raw.d.length && out.length < max; i++) if (raw.d[i] > from && raw.d[i] <= upTo) out.push({ d: raw.d[i], c: raw.ac[i] });
+    return out;
+  }
+
   /** Why a closed losing trade went wrong, in plain words. */
   function diagnose(tr) {
     const tags = [];
@@ -1170,7 +1187,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
-    predict, SIGNALS, signalMatrix, trendForecast, trendStates, trendCalls, scoreCalls, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
+    predict, SIGNALS, signalMatrix, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };

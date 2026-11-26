@@ -743,9 +743,9 @@
       <div class="${v.c}" style="font-size:13px;margin-top:2px">${esc(v.t)}</div></div>`;
   }
   /** Candlestick chart with 20/50-day averages, support/resistance, pattern marks and the trend cone. */
-  function candleChart(P) {
+  function candleChart(P, actual) {
     const C = P.chart, n = C.c.length, ahead = P.proj.ahead, W = 340, H = 210, padR = 34, padT = 8, padB = 8;
-    const vals = [...C.l, ...C.h, ...P.proj.path].filter((x) => x != null); // cone is clipped at the edges
+    const vals = [...C.l, ...C.h, ...P.proj.path, ...(actual || [])].filter((x) => x != null); // cone is clipped at the edges
     const lo = Math.min(...vals) * 0.995, hi = Math.max(...vals) * 1.005;
     const slot = (W - padR) / (n + ahead), X = (i) => slot * (i + 0.5), Y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
     const cw = Math.max(1.5, slot * 0.62);
@@ -769,8 +769,9 @@
       g += `<path d="${up ? `M${x - s},${y + s}L${x + s},${y + s}L${x},${y - s}Z` : `M${x - s},${y - s}L${x + s},${y - s}L${x},${y + s}Z`}" fill="${up ? css('--sage') : css('--clay')}"/>`;
     });
     g += `<line x1="${X(n - 1).toFixed(1)}" x2="${X(n - 1).toFixed(1)}" y1="${padT}" y2="${H - padB}" stroke="${css('--line')}" stroke-width="1"/>`;
+    if (actual && actual.length) g += `<path d="M${X(n - 1).toFixed(1)},${Y(C.c[n - 1]).toFixed(1)}${actual.map((v, k) => `L${X(n + k).toFixed(1)},${Y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--ink')}" stroke-width="2"/>` + actual.map((v, k) => `<circle cx="${X(n + k).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="1.8" fill="${css('--ink')}"/>`).join('');
     return `<svg class="chart" style="height:230px;overflow:hidden" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>
-      <div class="legend" style="flex-wrap:wrap;gap:6px 14px"><span><i style="background:var(--clay-d)"></i>20-day avg</span><span><i style="background:var(--slate)"></i>50-day avg</span><span><i style="background:var(--ochre)"></i>trend cone (2 weeks)</span><span>▲▼ candle patterns</span><span>– – support / resistance</span></div>`;
+      <div class="legend" style="flex-wrap:wrap;gap:6px 14px">${actual ? '<span><i style="background:var(--ink)"></i>what really happened</span>' : ''}<span><i style="background:var(--clay-d)"></i>20-day avg</span><span><i style="background:var(--slate)"></i>50-day avg</span><span><i style="background:var(--ochre)"></i>trend cone (2 weeks)</span><span>▲▼ candle patterns</span><span>– – support / resistance</span></div>`;
   }
 
   function viewStock() {
@@ -947,7 +948,7 @@
       await new Promise((ok) => setTimeout(ok, 30));
       const ctx = E.begin(tst, data, nifty, Date.now());
       E.skipTo(ctx, start);
-      Object.assign(train, { phase: 'running', tst, ctx, calls, playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx), runCapital: capital });
+      Object.assign(train, { phase: 'running', tst, ctx, calls, data, nifty, pc: null, pcSym: tickers[0], playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx), runCapital: capital });
       train.timer = setInterval(trainTick, 100);
     } catch (e) {
       toast(e.message === 'stopped' ? 'Training cancelled' : 'Could not load history – ' + e.message);
@@ -1224,6 +1225,38 @@
     }
     return h + `</div>`;
   }
+  /** Candlestick chart + predictions as they looked on a past date of the run; reveals what happened next up to the replay date. */
+  function pastChartCard(asOf, done) {
+    if (!train.data) return '';
+    const syms = Object.keys(train.data), s = train.pcSym && train.data[train.pcSym] ? train.pcSym : syms[0];
+    const days = train.data[s].bars.d.filter((d) => d >= train.start && d <= asOf);
+    let h = `<div class="sec">Chart predictions${done ? '' : ' while it trades'}</div><div class="card"><div class="chips" style="margin:0 0 10px">${syms.map((x) => `<button class="chip ${x === s ? 'on' : ''}" data-tsym="${esc(x)}">${sym(x)}</button>`).join('')}</div>`;
+    if (!days.length) return h + '<p class="empty">Starts once the replay begins.</p></div>';
+    const pc = train.pc;
+    if (done) h += `<label>Date</label><input type="range" id="pc_date" min="0" max="${days.length - 1}" value="${pc && pc.sym === s ? Math.max(0, days.indexOf(pc.date)) : days.length - 1}" style="width:100%">`;
+    else h += `<div class="actions" style="margin-top:0"><button class="btn sm" id="pc_snap">Read the chart on ${fdate(asOf)}</button></div>`;
+    if (!pc || pc.sym !== s) return h + `<p class="m" style="margin:8px 0 0">${done ? 'Move the slider to any day of the run' : 'Tap to freeze the chart on the replay date'} – Moli reads it using only prices up to that day, then you see what really happened next.</p></div>`;
+    const P = pc.P;
+    if (!P) return h + `<p class="empty">Not enough earlier prices on ${fdate(pc.date)}.</p></div>`;
+    const nx = E.closesAfter(train.data[s].bars, pc.date, asOf, P.proj.ahead), act = nx.map((x) => x.c), o = P.outlook, F = P.trend;
+    h += `<div class="lbl" style="margin-top:10px">${sym(s)} · ${fdate(pc.date)} · ${px(P.price)}</div>${candleChart(P, act)}`;
+    h += `<div class="row"><div><b>Moli's read</b><div class="m">${esc(leanText(o))}${o.lean === 'none' ? '' : ` · ${Math.round(o.p5 * 100)}% of similar setups rose within a week`}${P.active.length ? ` · ${P.active.slice(0, 3).map((x) => x.label).join(', ')}` : ' · no signals'}</div></div></div>`;
+    if (F) h += `<div class="row"><div><b>Trend</b> ${trendPill(F.now)}<div class="m">next 20 sessions: ${Math.round(F.pUp * 100)}% chance higher – ${callText(F)}</div></div></div>`;
+    h += `<div class="row"><div><b>2-week cone</b><div class="m">about ${px(P.proj.end)} (likely ${px(P.proj.lo)}–${px(P.proj.hi)})</div></div></div>`;
+    if (!act.length) h += `<p class="m" style="margin:8px 0 0">What happened next shows up as the replay moves on.</p>`;
+    else {
+      const last = act[act.length - 1], ch = (last / P.price - 1) * 100, k = act.length, inCone = last >= P.proj.loPath[k] && last <= P.proj.hiPath[k];
+      const leanOk = o.lean === 'none' ? null : (o.lean === 'up') === (ch > 0);
+      h += `<div class="lbl" style="margin-top:12px">What really happened · ${k} session${k > 1 ? 's' : ''} later</div>
+        <p class="sub" style="margin-top:4px"><b class="${cls(ch)}">${pct(ch)}</b> to ${px(last)}. ${inCone ? 'Inside the cone.' : last > P.proj.hiPath[k] ? 'Above the cone – a bigger rise than normal swings.' : 'Below the cone – a bigger fall than normal swings.'}${leanOk == null ? '' : leanOk ? ` The ${o.lean} lean was right.` : ` The ${o.lean} lean was wrong.`}${k < P.proj.ahead ? ' (still playing out)' : ''}</p>`;
+    }
+    return h + `<p class="m" style="margin:8px 0 0">Prices are adjusted for later splits and bonuses, so they can look lower than the prices quoted back then.</p></div>`;
+  }
+  function snapChart(date) {
+    const s = train.pcSym; if (!train.data || !train.data[s]) return;
+    let P = null; try { P = E.predictAt(train.data[s].bars, train.nifty && train.nifty.bars, date); } catch (e) { P = null; }
+    train.pc = { sym: s, date, P };
+  }
   function viewTrain() {
     const ph = train.phase;
     if (ph === 'repeating' || ph === 'repeatDone') return viewRepeat();
@@ -1245,7 +1278,7 @@
       }
       h += `</div>`;
       if (train.missing && train.missing.length) h += `<p class="note" style="margin-top:0">No data for ${esc(train.missing.join(', '))} in this period – left out.</p>`;
-      if (ph === 'running') h += pastTrendCard(last ? last[0] : train.start, false);
+      if (ph === 'running') h += pastChartCard(last ? last[0] : train.start, false) + pastTrendCard(last ? last[0] : train.start, false);
       if (ph === 'done') {
         const s = train.summary, P = train.preview;
         const ct = train.trades.filter((t) => t.x).sort((a, b) => a.x.localeCompare(b.x));
@@ -1257,7 +1290,7 @@
           <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(s.win) ? '–' : Math.round(s.win * 100) + '%'}</div></div>
           <div style="margin-top:10px"><div class="m">Net P&amp;L</div><b class="${cls(s.pnl)}">${inr(s.pnl)}</b></div>
           <div style="margin-top:10px"><div class="m">vs Nifty</div><b class="${cls(s.ret - (s.nret || 0))}">${s.nret == null ? '–' : pct(s.ret - s.nret) + ' pts'}</b></div></div></div>`;
-        h += pastTrendCard('9999-12-31', true);
+        h += pastChartCard(last ? last[0] : train.end, true) + pastTrendCard('9999-12-31', true);
         h += `<div class="sec">Mistakes noted in this run</div>` + mistakesCard((train.tst.learning.mistakes || []), { empty: 'No mistakes noted in this run.' });
         h += `<div class="sec">Apply to the live brain</div><div class="card">`;
         if (s.taught) h += `<p class="empty">Done – your live brain now includes these ${train.tst.learning.closed.length} past trades as evidence.</p>`;
@@ -1315,6 +1348,11 @@
     return h;
   }
 
+  // Replay controls act on pointerdown (the screen re-renders many times a second, so a full click can miss);
+  // the click that follows is swallowed so it can't land on whatever was drawn under the finger.
+  let swallowClick = 0;
+  document.addEventListener('click', (e) => { if (Date.now() < swallowClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+  const pd = (fn) => (e) => { if (e.button > 0) return; swallowClick = Date.now() + 350; fn(e); };
   function bindTrain() {
     const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
     document.querySelectorAll('[data-preset]').forEach((b) => { b.onclick = () => { train.preset = b.dataset.preset; render(); }; });
@@ -1334,10 +1372,14 @@
     on('r_stop', () => { if (train.rep) train.rep.stop = true; });
     on('r_apply', () => applyRepeat(false));
     on('r_force', () => { if (confirm('These settings did worse on unseen data. Apply anyway?')) applyRepeat(false, true); });
-    on('t_play', () => { train.playing = !train.playing; render(); });
-    on('t_skip', () => { E.stepDays(train.ctx, Infinity); trainDone(); });
-    on('t_stop', () => { train.ctx.dates.length = train.ctx.pos; trainDone(); });
+    const _t_play = $('t_play'); if (_t_play) _t_play.onpointerdown = pd(() => { train.playing = !train.playing; render(); });
+    const _t_skip = $('t_skip'); if (_t_skip) _t_skip.onpointerdown = pd(() => { E.stepDays(train.ctx, Infinity); trainDone(); });
+    const _t_stop = $('t_stop'); if (_t_stop) _t_stop.onpointerdown = pd(() => { train.ctx.dates.length = train.ctx.pos; trainDone(); });
     on('t_teach', teachLive);
+    document.querySelectorAll('[data-tsym]').forEach((b) => { b.onpointerdown = pd(() => { train.pcSym = b.dataset.tsym; if (train.pc && train.phase === 'done') snapChart(train.pc.date); render(); }); });
+    const snap = $('pc_snap'); if (snap) snap.onpointerdown = pd(() => { const eq = train.tst.equity, d = eq.length ? eq[eq.length - 1][0] : train.start; snapChart(d); render(); });
+    const rg = $('pc_date');
+    if (rg) rg.onchange = () => { const eq = train.tst.equity, upto = eq.length ? eq[eq.length - 1][0] : train.end; const days = train.data[train.pcSym].bars.d.filter((d) => d >= train.start && d <= upto); snapChart(days[+rg.value]); render(); };
     on('t_new', () => { train = { phase: 'setup', preset: train.preset, from: train.from, to: train.to, brain: train.brain, speed: train.speed, mode: train.mode, rounds: train.rounds, autoApply: train.autoApply, capital: train.capital, route: train.route, style: train.style }; render(); });
   }
 

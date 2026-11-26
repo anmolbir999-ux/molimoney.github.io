@@ -247,3 +247,4 @@ body.chat .composer{display:block}
 [hidden]{display:none !important}
 @media (prefers-color-scheme:dark){.wrapban{background:#12110f;color:var(--ink);border:1px solid var(--line)}}
 .toast{z-index:25}
+input[type=range]{accent-color:var(--clay);padding:0;border:0;background:none}
