@@ -1071,6 +1071,43 @@
     };
   }
 
+  /** Split/dividend-adjusted OHLC from raw Yahoo bars. */
+  const adjBars = (raw) => { const f = raw.c.map((c, i) => raw.ac[i] / c); return { o: raw.o.map((x, i) => x * f[i]), h: raw.h.map((x, i) => x * f[i]), l: raw.l.map((x, i) => x * f[i]), c: raw.ac.slice(), v: raw.v, d: raw.d }; };
+  /**
+   * Trend calls made during a past period, the way they would have been made then: every `every`
+   * sessions the model is refitted on rows whose 20-session outcome was already known that day,
+   * and calls the next 20 sessions. Each call carries its outcome date so a replay can reveal it
+   * only once the replay reaches that date.
+   */
+  function trendCalls(raw, nifty, start, end, every = TF_H) {
+    const b = adjBars(raw), c = b.c, n = c.length, { X, s50, s200 } = tfFeatures(b, nifty), states = trendStates(c, s50, s200), out = [];
+    const y = (i) => (c[i + TF_H] > c[i] ? 1 : 0);
+    let i0 = b.d.findIndex((d) => d >= start); if (i0 < 0) return out;
+    for (let i = i0; i < n && b.d[i] <= end; i += every) {
+      if (!X[i] || !states[i]) continue;
+      const tr = []; for (let k = Math.max(0, i - TF_H - 1260); k + TF_H <= i; k++) if (X[k]) tr.push(k);
+      if (tr.length < 250) continue;
+      const M = logitFit(tr.map((k) => X[k]), tr.map(y), 150), pUp = M.p(X[i]), upRate = tr.reduce((s2, k) => s2 + y(k), 0) / tr.length;
+      let age = 0; for (let k = i; k >= 0 && states[k] === states[i]; k--) age++;
+      const j = i + TF_H < n ? i + TF_H : null;
+      out.push({ d: b.d[i], now: states[i], age, pUp, call: pUp >= 0.58 ? 'up' : pUp <= 0.42 ? 'down' : 'unclear', guess: upRate >= 0.5 ? 'up' : 'down',
+        due: j == null ? null : b.d[j], ret: j == null ? null : (c[j] / c[i] - 1) * 100, after: j == null ? null : states[j] });
+    }
+    return out;
+  }
+  /** Score trend calls whose outcome is known by `asOf` (all if omitted). */
+  function scoreCalls(calls, asOf) {
+    const k = calls.filter((x) => x.due && (!asOf || x.due <= asOf));
+    const right = (x, dir) => (dir === 'up' ? x.ret > 0 : x.ret <= 0);
+    const leaned = k.filter((x) => x.call !== 'unclear');
+    const r = { n: k.length, hit: k.filter((x) => right(x, x.pUp >= 0.5 ? 'up' : 'down')).length, base: k.filter((x) => right(x, x.guess)).length,
+      leaned: leaned.length, leanHit: leaned.filter((x) => right(x, x.call)).length,
+      up: k.filter((x) => x.call === 'up'), down: k.filter((x) => x.call === 'down'),
+      stay: k.filter((x) => x.after === x.now).length };
+    r.upHit = r.up.filter((x) => x.ret > 0).length; r.downHit = r.down.filter((x) => x.ret <= 0).length; r.up = r.up.length; r.down = r.down.length;
+    return r;
+  }
+
   /**
    * Predictions for one stock from its raw (split-adjusted) bars. Returns a compact object
    * stored with the account: today's signals with their historical odds, an overall lean,
@@ -1133,7 +1170,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
-    predict, SIGNALS, signalMatrix, trendForecast, trendStates, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
+    predict, SIGNALS, signalMatrix, trendForecast, trendStates, trendCalls, scoreCalls, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };
