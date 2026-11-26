@@ -157,7 +157,7 @@
       await new Promise((ok) => setTimeout(ok, 40));
       const before = st.lastDate;
       const res = E.run(st, data, nifty, Date.now());
-      for (const s in data) if (st.tickers[s]) { try { st.tickers[s].pred = E.predict(data[s].bars); } catch (e) { /* keep old */ } }
+      for (const s in data) if (st.tickers[s]) { try { st.tickers[s].pred = E.predict(data[s].bars, { nifty: nifty && nifty.bars }); } catch (e) { /* keep old */ } }
       const brief = briefing(res, before);
       if (brief) say(brief, res.days > 300 ? 'sim' : res.days ? 'pnl' : null);
       Object.assign(run, { days: res.days, from: res.days ? (before || st.warmStart) : null, to: st.lastDate });
@@ -713,6 +713,28 @@
     if ((bookUp && edge < 0) || (bookDown && edge > 0)) return { t: `Textbook says ${bookUp ? 'up' : 'down'} – on this stock it usually went the other way`, c: edge > 0 ? 'up' : 'down' };
     return { t: `Historically ${edge > 0 ? 'bullish' : 'bearish'} here (${edge > 0 ? '+' : ''}${edge.toFixed(0)} pts vs a normal week)`, c: edge > 0 ? 'up' : 'down' };
   }
+  const TW = { up: 'Uptrend', down: 'Downtrend', side: 'Sideways' };
+  const trendPill = (k) => `<span class="pill ${k === 'down' ? 'neg' : ''}" style="${k === 'side' || k === 'unclear' ? 'background:var(--line);color:var(--muted)' : ''}">${k === 'unclear' ? 'Unclear' : TW[k]}</span>`;
+  const callText = (F) => (F.call === 'unclear' ? 'no clear call' : `leans ${F.call}`);
+  const trustText = (F) => ({ some: 'it has done a little better than guessing', little: 'barely better than guessing', none: 'no better than always guessing the usual direction', untested: 'not enough history to test' })[F.trust];
+  function trendStrip(hist) {
+    const col = { up: 'var(--sage)', down: 'var(--clay)', side: 'var(--line)' };
+    return `<div style="display:flex;gap:1px;height:10px;border-radius:5px;overflow:hidden;margin:8px 0 2px">${hist.map((x) => `<i style="flex:1;background:${x ? col[x] : 'transparent'}"></i>`).join('')}</div><div class="m" style="display:flex;justify-content:space-between;font-size:12px"><span>80 sessions ago</span><span>today</span></div>`;
+  }
+  function trendCard(F) {
+    if (!F) return `<div class="card"><div class="lbl">Trend</div><p class="empty">Needs about 3 years of prices.</p></div>`;
+    const nx = F.next, b = (v) => (Number.isNaN(v) ? '–' : Math.round(v * 100) + '%');
+    return `<div class="card"><div class="top" style="display:flex;justify-content:space-between;align-items:center"><span class="lbl">Trend now</span>${trendPill(F.now)}</div>
+      <p class="sub" style="margin-top:4px">${F.now === 'side' ? 'No clear direction' : F.now === 'up' ? 'Rising' : 'Falling'} for ${F.age} session${F.age > 1 ? 's' : ''} · 50-day average ${pct(F.sl50, 1)} over 20 sessions${F.now === 'up' ? ', price above it' : F.now === 'down' ? ', price below it' : ''}.</p>
+      ${trendStrip(F.hist)}
+      <div class="lbl" style="margin-top:14px">Next ${F.h} sessions</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px"><div class="big md">${Math.round(F.pUp * 100)}% <span class="m" style="font-size:14px">chance higher</span></div>${trendPill(F.call)}</div>
+      <p class="sub">From a small model trained on this stock's own past (moves, averages, RSI, MACD, volatility${F.useNifty ? ', the Nifty' : ''}). Biggest factors: ${F.drivers.map((d) => `${d.f} (${d.dir === 'up' ? 'higher → up' : 'higher → down'})`).join(', ')}.</p>
+      <div class="lbl" style="margin-top:12px">What happened next before</div>
+      <p class="sub" style="margin-top:4px">${F.h} sessions after ${F.now === 'side' ? 'a sideways stretch' : `an ${F.now === 'up' ? 'uptrend' : 'downtrend'}`.replace('an downtrend', 'a downtrend')} on this stock it was an uptrend ${b(nx.up)}, sideways ${b(nx.side)}, a downtrend ${b(nx.down)} of the time (${nx.n} days).</p>
+      <div class="lbl" style="margin-top:12px">Honest score</div>
+      <p class="sub" style="margin-top:4px">${F.test.n ? `Tested on ${F.test.n} past days it never trained on: right ${Math.round(F.test.acc * 100)}% of the time; always guessing the usual direction was right ${Math.round(F.test.baseAcc * 100)}%. So ${trustText(F)}.` : trustText(F)}</p></div>`;
+  }
   function sigRow(s, base) {
     const v = verdict(s, base), k = { candle: 'Candle', chart: 'Chart', trend: 'Trend' }[s.kind];
     return `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:10px;align-items:center"><b>${esc(s.label)}</b><span class="pill ${s.dir === 'bear' ? 'neg' : ''}" style="${s.dir === 'neutral' ? 'background:var(--line);color:var(--muted)' : ''}">${k}${s.dir === 'neutral' ? '' : ' · ' + (s.dir === 'bull' ? 'textbook up' : 'textbook down')}</span></div>
@@ -761,6 +783,7 @@
     h += `<div class="says">${buddy(70, mood)}<div class="bub"><div class="adv"><div class="top" style="margin:0"><span class="lbl">Moli's read</span><span class="pill ${o.lean === 'down' ? 'neg' : ''}" style="${o.lean === 'none' ? 'background:var(--line);color:var(--muted)' : ''}">${esc(leanText(o))}</span></div></div>
       <h3>${o.lean === 'none' ? 'Today\'s signals don\'t tell me much' : `Similar setups rose ${Math.round(o.p5 * 100)}% of the time`}</h3>
       <p>${P.active.length ? `${P.active.length} signal${P.active.length > 1 ? 's' : ''} today. ` : 'No signals today. '}On ${sym(curSym)} a normal week ends higher ${Math.round(P.base.h5.up * 100)}% of the time${o.lean === 'none' ? '' : `; with today's signals it was ${Math.round(o.p5 * 100)}% (${o.edge > 0 ? '+' : ''}${o.edge.toFixed(1)} pts, from ${o.n} past cases)`}. Based on ${P.years} years of this stock's prices – a tilt in the odds, not a promise.</p></div></div>`;
+    h += `<div class="sec">Uptrend or downtrend?</div>` + trendCard(P.trend);
     const pr = P.proj;
     h += `<div class="card"><div class="lbl">Trend projection</div><div class="big md">${px(pr.end)}</div>
       <p class="sub">If the last ${pr.look} sessions' trend (${pct(pr.slopePct, 2)} a day) simply continued, that's where it would be in ${pr.ahead} sessions. 9 times in 10 the normal day-to-day swings would land it between ${px(pr.lo)} and ${px(pr.hi)}. ${pr.r2 < 0.3 ? 'The trend has been weak and choppy, so trust this even less.' : `The trend has been fairly steady (fit ${Math.round(pr.r2 * 100)}%), but trends end without warning.`}</p></div>`;
@@ -784,9 +807,9 @@
     const rows = Object.entries(st.tickers).filter(([, t]) => t.pred).map(([s, t]) => ({ s, o: t.pred.outlook, n: t.pred.active.length, P: t.pred }));
     if (!rows.length) return `<div class="card"><p class="empty">Predictions appear after the next update.</p></div>`;
     rows.sort((a, b) => Math.abs(b.o.lean === 'none' ? 0 : b.o.edge) - Math.abs(a.o.lean === 'none' ? 0 : a.o.edge));
-    return `<div class="card">` + rows.map(({ s, o, n, P }) => `<a class="row" data-stock="${esc(s)}"><div><b>${sym(s)}</b><div class="m">${n ? P.active.slice(0, 2).map((x) => x.label).join(', ') + (n > 2 ? ` +${n - 2}` : '') : 'no signals today'}</div></div>
+    return `<div class="card">` + rows.map(({ s, o, n, P }) => `<a class="row" data-stock="${esc(s)}"><div><b>${sym(s)}</b><div class="m">${P.trend ? `${TW[P.trend.now].toLowerCase()} · next 20: ${callText(P.trend)} · ` : ''}${n ? P.active.slice(0, 2).map((x) => x.label).join(', ') + (n > 2 ? ` +${n - 2}` : '') : 'no signals today'}</div></div>
       <div class="r"><span class="pill ${o.lean === 'down' ? 'neg' : ''}" style="${o.lean === 'none' ? 'background:var(--line);color:var(--muted)' : ''}">${o.lean === 'none' ? 'no edge' : `leans ${o.lean}`}</span>${o.lean === 'none' ? '' : `<div class="m" style="margin-top:3px">${Math.round(o.p5 * 100)}% rose · normally ${Math.round(P.base.h5.up * 100)}%</div>`}</div></a>`).join('') +
-      `<p class="m" style="margin:8px 0 0">Odds of being higher in 5 sessions after today's signals, from each stock's own history. Tap a stock for the chart and patterns.</p></div>`;
+      `<p class="m" style="margin:8px 0 0">Pill: odds of being higher in 5 sessions after today's signals. Below the name: the trend now and the 20-session forecast. All from each stock's own history. Tap a stock for the chart and patterns.</p></div>`;
   }
 
   function predictText(s) {
@@ -795,6 +818,7 @@
     const o = P.outlook;
     return `**${sym(s)}** ${px(P.price)} (${pct(P.change, 2)} on ${fdate(P.asOf)}). **${leanText(o)}**: a normal week ends higher ${Math.round(P.base.h5.up * 100)}% of the time; ${o.lean === 'none' ? "today's signals don't change that much" : `after setups like today's it was ${Math.round(o.p5 * 100)}% (${o.n} past cases)`}.` +
       (P.active.length ? `\n\nToday's signals:\n${P.active.map((x) => `- ${x.label}: higher a week later ${Number.isNaN(x.h5.up) ? '–' : Math.round(x.h5.up * 100) + '%'} of ${x.h5.n} times`).join('\n')}` : '\n\nNo candle or chart pattern today.') +
+      (P.trend ? `\n\n**Trend:** ${TW[P.trend.now].toLowerCase()} for ${P.trend.age} sessions. Next 20 sessions: ${Math.round(P.trend.pUp * 100)}% chance higher – ${callText(P.trend)}. On unseen past days this forecast was right ${Math.round(P.trend.test.acc * 100)}% vs ${Math.round(P.trend.test.baseAcc * 100)}% for always guessing, so ${trustText(P.trend)}.` : '') +
       `\n\nTrend cone for 2 weeks: about ${px(P.proj.end)} (likely ${px(P.proj.lo)}–${px(P.proj.hi)}).${P.levels.res[0] ? ` Resistance ${px(P.levels.res[0].level)}.` : ''}${P.levels.sup[0] ? ` Support ${px(P.levels.sup[0].level)}.` : ''}\n\nOdds from this stock's last ${P.years} years – not a promise.`;
   }
 
@@ -1502,6 +1526,16 @@
     if (/\b(position|holding|hold|own|portfolio|invested in)/.test(l)) {
       const pos = Object.entries(st.tickers).filter(([, t]) => t.live.qty > 0);
       return say(pos.length ? `I hold:\n${pos.map(([s, t]) => { const x = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / x.ep - 1) * 100; return `- ${sym(s)}: ${x.q} at ${px(x.ep)}, now ${px(t.lastClose)} (${pct(r)})${x.stop ? `, stop ${px(x.stop)}` : ''}`; }).join('\n')}\n\n${accountLine()}` : `I hold nothing – everything is in cash. ${accountLine()}`);
+    }
+    if (/\b(up ?trends?|down ?trends?|trends?|trending|sideways)\b/.test(l) && !/\b(train|follow)/.test(l)) {
+      const s0 = symIn(), s = s0 && normSym(s0);
+      if (s && st.tickers[s]) return say(predictText(s));
+      const rows = Object.entries(st.tickers).filter(([, t]) => t.pred && t.pred.trend);
+      if (!rows.length) return say('Trends appear after the next update – say **update**.');
+      const grp = (k) => rows.filter(([, t]) => t.pred.trend.now === k).map(([x, t]) => `${sym(x)} (${t.pred.trend.age}d, next 20: ${callText(t.pred.trend)} ${Math.round(t.pred.trend.pUp * 100)}%)`);
+      const lines = ['up', 'down', 'side'].map((k) => [k, grp(k)]).filter(([, a]) => a.length).map(([k, a]) => `**${TW[k]}:** ${a.join(', ')}`);
+      const tested = rows.filter(([, t]) => t.pred.trend.test.n), acc = tested.reduce((a, [, t]) => a + t.pred.trend.test.acc, 0) / (tested.length || 1), base = tested.reduce((a, [, t]) => a + t.pred.trend.test.baseAcc, 0) / (tested.length || 1);
+      return say(`${lines.join('\n')}\n\nThe 20-session forecast was right ${Math.round(acc * 100)}% of the time on past days it never saw, vs ${Math.round(base * 100)}% for always guessing the usual direction – treat it as a hint, not a signal. Ask **trend RELIANCE** for one stock.`);
     }
     if (/\b(predict|prediction|forecast|outlook|pattern|candle|candlestick|chart|support|resistance|will \w+ (go|rise|fall)|going up|going down)/.test(l)) {
       const s0 = symIn(), s = s0 && normSym(s0);
