@@ -16,7 +16,7 @@
   const REVIEW_EVERY = 21, MIN_HISTORY = 120, HYST = 0.2, EQ_KEEP = 260;
   const RULE_MIN_N = 12, RULE_WINDOW = 400, RF = 6;
   // Brain settings: defaults, overridable per account (st.cfg.brain) – tuned by repeat-training mode.
-  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null, quick: false, tpAtr: 0, maxDays: 0, quickEdge: 0.1 };
+  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null, quick: false, tpAtr: 0, maxDays: 0, quickEdge: 0.1, useMemory: true };
   // Quick defaults chosen because they held up in BOTH 2008–11 and 2023–26 (not the best in either):
   // no fixed target – each strategy's own exit takes the profit – a 3× ATR stop and a 10-session limit.
   const QUICK_PRESET = { quick: true, stopAtr: 3, tpAtr: 0, maxDays: 10, minScore: 0.3, reviewEvery: 21, quickEdge: 0.3 };
@@ -262,6 +262,7 @@
     st.trainings = st.trainings || [];
     st.chat = st.chat || [];
     st.learning.trained = st.learning.trained || [];
+    st.learning.mistakes = st.learning.mistakes || [];
     st.equity.forEach((r) => { if (r.length < 4) r[3] = st.invested - st.withdrawn; });
     st.v = 2;
     return st;
@@ -392,6 +393,43 @@
     }
   }
 
+  // ------------------------------------------------------------------ mistake memory: note once, never repeat
+  // A mistake = a trade the brain actually made that lost more than 1% while showing warning signs at entry.
+  // Its fingerprint (stock + strategy + those warning signs) is blocked from then on. Shadow accounts keep taking
+  // such trades, so we can see what avoiding it saved – and forgive it if it would have made money more often.
+  const MEM_LOSS = -1;
+  const memMatch = (m, sym, s, feat) => !m.forgiven && m.sym === sym && m.s === s && m.keys.every((k) => feat && feat[k]);
+  function memBlock(st, sym, s, feat) {
+    if (!s || !brainParams(st).useMemory) return null;
+    const M = st.learning.mistakes; if (!M || !M.length) return null;
+    for (const m of M) if (memMatch(m, sym, s, feat)) return m;
+    return null;
+  }
+  function noteMistake(st, sym, cl, d) {
+    if (!cl || !(cl.ret < MEM_LOSS) || !cl.f || !cl.s || !brainParams(st).useMemory) return;
+    const keys = Object.keys(FEATURES).filter((k) => cl.f[k]); if (!keys.length) return;
+    const M = st.learning.mistakes = st.learning.mistakes || [], id = `${sym}|${cl.s}|${keys.join('+')}`;
+    const when = keys.map((k) => FEATURES[k].label.toLowerCase()).join(' and '), name = `${sym.replace('.NS', '')} ${STRATEGIES[cl.s] ? STRATEGIES[cl.s].label : cl.s}`;
+    let m = M.find((x) => x.id === id);
+    if (m && !m.forgiven) { m.count++; m.date = d; return; }
+    if (m) Object.assign(m, { forgiven: false, forgivenOn: null, date: d, ret: cl.ret, count: m.count + 1, avoided: 0, saved: 0, missed: 0, missedGain: 0 });
+    else M.push(m = { id, sym, s: cl.s, keys, date: d, entry: cl.e, ret: Math.round(cl.ret * 100) / 100, pnl: Math.round(cl.pnl || 0), reason: cl.r, count: 1, avoided: 0, saved: 0, missed: 0, missedGain: 0, forgiven: false });
+    if (M.length > 300) M.shift();
+    logEvent(st, d, `Noted a mistake: ${name} while ${when} lost ${cl.ret.toFixed(1)}%. I won't make that trade again.`, 'mistake');
+  }
+  function memoryOutcome(st, sym, cl) {
+    const M = st.learning.mistakes; if (!M || !M.length || !cl.f) return;
+    for (const m of M) {
+      if (m.forgiven || m.sym !== sym || m.s !== cl.s || !(cl.e > m.date) || !m.keys.every((k) => cl.f[k])) continue;
+      if (cl.ret < 0) { m.avoided++; m.saved += -cl.ret; } else { m.missed++; m.missedGain += cl.ret; }
+      if (m.missed >= 2 && m.missed > m.avoided) {
+        m.forgiven = true; m.forgivenOn = cl.x;
+        logEvent(st, cl.x, `Forgave a mistake: ${sym.replace('.NS', '')} ${STRATEGIES[m.s] ? STRATEGIES[m.s].label : m.s} in those conditions made money ${m.missed}× since (${m.avoided}× it would have lost) – it was probably bad luck`, 'unlearn');
+      }
+    }
+  }
+  const mistakesBefore = (st, start) => (st.learning.mistakes || []).filter((m) => !m.forgiven && m.date < start);
+
   function updateRules(st, date) {
     // evidence = trades the brain lived through recently + anything it was taught in training mode
     const B0 = brainParams(st), pool0 = allowedStrategies(B0);
@@ -486,6 +524,7 @@
           const cl = onBar(T.shadows[k], d, R.o[i], R.h[i], R.l[i], R.c[i], tg[k], a, true, feat, k);
           if (cl && ctx.allowed.includes(k)) { st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
             if (st.learning.closed.length > cap) st.learning.closed.shift(); }
+          if (cl) memoryOutcome(st, sym, cl);
         }
         if (++T.sinceReview >= B.reviewEvery) { T.sinceReview = 0; review(st, sym, T, d); }
         const pm = d >= st.paperStart ? pauseOn(st, d) : null;
@@ -493,13 +532,18 @@
         const qfire = B.quick && T.quickSet && T.quickSet.length ? T.quickSet.find((k) => tg[k] === 1) : null;
         const tgt = T.removing || pm === 'stop' ? 0 : B.quick ? (qfire ? 1 : 0) : T.active ? tg[T.active] : 0;
         const why = qfire || T.active;
-        const blk = blocked(st, feat), allow = blk.length === 0 && !pm && !T.removing;
-        if (d >= st.warmStart && d < st.paperStart) onBar(T.sim, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, why);
+        const blk = blocked(st, feat), mem = tgt === 1 ? memBlock(st, sym, why, feat) : null;
+        const allow = blk.length === 0 && !mem && !pm && !T.removing;
+        if (d >= st.warmStart && d < st.paperStart) {
+          if (mem && T.sim.qty === 0 && T.sim.armed && !T.sim.pending) mem.blocked = (mem.blocked || 0) + 1;
+          noteMistake(st, sym, onBar(T.sim, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, why), d);
+        }
         if (d >= st.paperStart) {
-          const had = T.live.pending;
-          onBar(T.live, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, why);
-          if (blk.length && !pm && tgt === 1 && T.live.qty === 0 && T.live.armed && !had)
-            T.blockedToday = { d, rules: blk };
+          const had = T.live.pending, ready = T.live.qty === 0 && T.live.armed && !had;
+          if (mem && ready) mem.blocked = (mem.blocked || 0) + 1;
+          noteMistake(st, sym, onBar(T.live, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, why), d);
+          if ((blk.length || mem) && !pm && tgt === 1 && ready)
+            T.blockedToday = { d, rules: blk, mem: mem ? mem.id : null };
         }
         T.lastClose = R.c[i]; T.lastDate = d;
         T.spark.d.push(d); T.spark.c.push(R.c[i]);
@@ -545,11 +589,21 @@
    * A throw-away account that paper trades a past period [start, end].
    * lessons: earlier closed trades to start with (only ones that ended before `start`, so no peeking ahead).
    */
-  function newTraining(cfg, start, end, lessons) {
+  function newTraining(cfg, start, end, lessons, mistakes) {
     const st = newState({ ...cfg, warmYears: 0, closedCap: 8000 }, start);
     st.training = { start, end };
     st.learning.trained = (lessons || []).filter((t) => t.x && t.x < start);
+    st.learning.mistakes = (mistakes || []).filter((m) => !m.forgiven && m.date < start)
+      .map((m) => ({ ...m, keys: m.keys.slice(), avoided: 0, saved: 0, missed: 0, missedGain: 0, blocked: 0, inherited: true }));
     return st;
+  }
+  /** Copy a training run's noted mistakes into the live brain (they are all in the past, so no peeking). */
+  function mergeMistakes(st, list, today, label) {
+    const M = st.learning.mistakes = st.learning.mistakes || [], ids = new Set(M.map((m) => m.id));
+    let added = 0;
+    for (const m of list || []) if (!m.forgiven && !ids.has(m.id)) { M.push({ ...m, keys: m.keys.slice(), avoided: 0, saved: 0, missed: 0, missedGain: 0, blocked: 0, from: label }); ids.add(m.id); added++; }
+    if (M.length > 300) M.splice(0, M.length - 300);
+    return added;
   }
   /** Lessons a training run could start with: everything known that ended before `start`. */
   function lessonsBefore(st, start) {
@@ -576,7 +630,10 @@
     return { added, newRules: after.filter((k) => !before.includes(k)), dropped: before.filter((k) => !after.includes(k)) };
   }
   function teach(st, tr, today, label) {
-    return addEvidence(st, tr.learning.closed, today, `Training ${label}: added {n} past trades to the brain's evidence`, 'train');
+    const r = addEvidence(st, tr.learning.closed, today, `Training ${label}: added {n} past trades to the brain's evidence`, 'train');
+    r.mistakes = mergeMistakes(st, tr.learning.mistakes, today, 'training');
+    if (r.mistakes) logEvent(st, today, `Training ${label}: remembered ${r.mistakes} mistake${r.mistakes > 1 ? 's' : ''} not to repeat`, 'mistake');
+    return r;
   }
 
   // ------------------------------------------------------------------ import a downloaded brain
@@ -603,7 +660,10 @@
       settings = normParams(n);
     }
     const trainings = Array.isArray(obj.trainings) ? obj.trainings.filter((x) => x && x.id && x.start && x.end).slice(-30) : [];
-    return { kind: 'brain', exported: obj.exported_at, settings, evidence: ev, trainings,
+    const d = /^\d{4}-\d{2}-\d{2}$/;
+    const mistakes = Array.isArray(obj.mistakes) ? obj.mistakes.filter((m) => m && typeof m.sym === 'string' && STRATEGIES[m.s] && Array.isArray(m.keys) && m.keys.length && m.keys.every((k) => FEATURES[k]) && d.test(m.date))
+      .slice(-300).map((m) => ({ id: `${m.sym}|${m.s}|${m.keys.join('+')}`, sym: m.sym.slice(0, 30), s: m.s, keys: m.keys.slice(), date: m.date, entry: d.test(m.entry) ? m.entry : m.date, ret: +m.ret || 0, pnl: +m.pnl || 0, reason: String(m.reason || ''), count: +m.count || 1, avoided: 0, saved: 0, missed: 0, missedGain: 0, forgiven: !!m.forgiven })) : [];
+    return { kind: 'brain', exported: obj.exported_at, settings, evidence: ev, trainings, mistakes,
       rules: obj.rules && typeof obj.rules === 'object' ? Object.keys(FEATURES).filter((k) => obj.rules[k] && obj.rules[k].active) : [] };
   }
   /** Apply an imported brain: its settings and/or its evidence. */
@@ -611,6 +671,7 @@
     const out = { changes: [], added: 0, newRules: [], dropped: [] };
     if (settings && b.settings) out.changes = applyParams(st, b.settings, today, nowIso);
     if (evidence && b.evidence.length) Object.assign(out, addEvidence(st, b.evidence, today, `Imported brain: added {n} trades to the evidence`, 'import'));
+    if (evidence && b.mistakes && b.mistakes.length) out.mistakes = mergeMistakes(st, b.mistakes, today, 'import');
     if (b.trainings.length) { const ids = new Set(st.trainings.map((x) => x.id)); b.trainings.forEach((x) => { if (!ids.has(x.id)) st.trainings.push({ ...x, imported: true }); }); st.trainings.sort((x, y) => String(x.at).localeCompare(String(y.at))); st.trainings.splice(0, Math.max(0, st.trainings.length - 30)); }
     logEvent(st, today, `You imported brain data${b.exported ? ` exported ${b.exported}` : ''}`, 'user', nowIso);
     return out;
@@ -656,6 +717,7 @@
     tpAtr: [0, 1, 1.5, 2, 3],
     maxDays: [0, 5, 10, 20],
     quickEdge: [0, 0.1, 0.3, 0.6],
+    useMemory: [true, false],
   };
   const PARAM_LABELS = {
     stopAtr: (v) => (v ? `stop-loss ${v}× ATR` : 'no stop-loss'),
@@ -668,6 +730,7 @@
     tpAtr: (v) => (v ? `take profit at +${v}× ATR` : 'no profit target'),
     maxDays: (v) => (v ? `sell after ${v} sessions at most` : 'no time limit'),
     quickEdge: (v) => `quick: use strategies averaging > +${v}% a trade`,
+    useMemory: (v) => (v ? 'never repeat a noted mistake' : 'no mistake memory'),
     strategies: (v) => {
       if (!v) return 'use all strategies of that style';
       const pool = STRATEGIES[v[0]].quick ? QUICK : NORMAL;
@@ -775,9 +838,9 @@
   }
 
   /** Run one training account with given settings over [start, end]; price data and indicators are reused. */
-  function evaluate(cfg, params, data, nifty, start, end, lessons) {
+  function evaluate(cfg, params, data, nifty, start, end, lessons, mistakes) {
     const n = normParams(params);
-    const st = newTraining({ ...cfg, stopAtr: n.stopAtr, brain: { ...n } }, start, end, lessons);
+    const st = newTraining({ ...cfg, stopAtr: n.stopAtr, brain: { ...n } }, start, end, lessons, mistakes);
     const ctx = begin(st, data, nifty, 0); stepDays(ctx, Infinity); finish(ctx);
     return st;
   }
@@ -794,7 +857,7 @@
   function applyParams(st, params, today, nowIso) {
     const n = normParams(params), before = brainParams(st);
     st.cfg.brain = { reviewEvery: n.reviewEvery, minScore: n.minScore, scoreWindow: n.scoreWindow, useRules: n.useRules, ruleMargin: n.ruleMargin, strategies: n.strategies,
-      quick: n.quick, tpAtr: n.tpAtr, maxDays: n.maxDays, quickEdge: n.quickEdge };
+      quick: n.quick, tpAtr: n.tpAtr, maxDays: n.maxDays, quickEdge: n.quickEdge, useMemory: n.useMemory };
     st.cfg.stopAtr = n.stopAtr;
     Object.values(st.tickers).forEach((T) => { [T.live, T.sim, ...Object.values(T.shadows)].forEach((t) => { t.stopAtr = n.stopAtr; t.tpAtr = n.tpAtr; t.maxDays = n.maxDays; }); });
     // switching style: the brain must pick a strategy of the new style at the next review
@@ -990,7 +1053,7 @@
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
     predict, SIGNALS, signalMatrix,
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
-    begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach, readBrain, importBrain, previewImport,
+    begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(this);
