@@ -16,11 +16,15 @@
   const REVIEW_EVERY = 21, MIN_HISTORY = 120, HYST = 0.2, EQ_KEEP = 260;
   const RULE_MIN_N = 12, RULE_WINDOW = 400, RF = 6;
   // Brain settings: defaults, overridable per account (st.cfg.brain) – tuned by repeat-training mode.
-  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null, quick: false, tpAtr: 0, maxDays: 0, quickEdge: 0.1, useMemory: true };
+  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null, quick: false, tpAtr: 0, maxDays: 0, quickEdge: 0.1, useMemory: true, idle: 'cash', join: false, crashGap: 5, beat: false };
   // Quick defaults chosen because they held up in BOTH 2008–11 and 2023–26 (not the best in either):
   // no fixed target – each strategy's own exit takes the profit – a 3× ATR stop and a 10-session limit.
-  const QUICK_PRESET = { quick: true, stopAtr: 3, tpAtr: 0, maxDays: 10, minScore: 0.3, reviewEvery: 21, quickEdge: 0.3 };
-  const NORMAL_PRESET = { quick: false, stopAtr: 3, tpAtr: 0, maxDays: 0 };
+  const QUICK_PRESET = { quick: true, beat: false, idle: 'cash', join: false, stopAtr: 3, tpAtr: 0, maxDays: 10, minScore: 0.3, reviewEvery: 21, quickEdge: 0.3 };
+  const NORMAL_PRESET = { quick: false, beat: false, idle: 'cash', join: false, stopAtr: 3, tpAtr: 0, maxDays: 0 };
+  // "Beat the Nifty": in 9 two-year periods 2008–2026 staying invested beat every timing approach; this keeps
+  // each stock held (joining trends already under way) and only steps aside when the Nifty falls 5% below its
+  // 200-day average – a crash filter, back in once the Nifty is above its average again.
+  const BEAT_PRESET = { quick: false, beat: true, idle: 'crash', crashGap: 5, join: true, stopAtr: 0, tpAtr: 0, maxDays: 0 };
   const brainParams = (st) => ({ ...BRAIN_DEFAULTS, stopAtr: st.cfg.stopAtr, ...(st.cfg.brain || {}) });
   const allowedStrategies = (B) => (B.strategies ? B.strategies.filter((k) => !!STRATEGIES[k].quick === !!B.quick) : null) || (B.quick ? QUICK : NORMAL);
 
@@ -85,6 +89,16 @@
     for (let i = n; i < a.length; i++) o[i] = fn(a.slice(i - n, i));
     return o;
   }
+  /** On-balance volume: running total of volume, added on up days and subtracted on down days. */
+  function obv(b) { const o = new Array(b.c.length).fill(0); for (let i = 1; i < b.c.length; i++) o[i] = o[i - 1] + (b.c[i] > b.c[i - 1] ? b.v[i] : b.c[i] < b.c[i - 1] ? -b.v[i] : 0); return o; }
+  /**
+   * Buy/sell "call" score 0–5, one point each: price above its 50-day average, 50-day above 200-day,
+   * MACD above its signal, RSI between 50 and 75 (strong, not stretched), OBV rising over 20 sessions.
+   */
+  function signalScore(b) {
+    const s50 = sma(b.c, 50), s200 = sma(b.c, 200), m = macd(b.c), r = rsi(b.c, 14), o = obv(b);
+    return b.c.map((c, i) => (i < 200 || isn(s200[i]) ? 0 : (c > s50[i]) + (s50[i] > s200[i]) + (m.line[i] > m.signal[i]) + (r[i] >= 50 && r[i] <= 75) + (o[i] > o[i - 20])));
+  }
   // "Hold until exit" strategies return entry/exit events; the position state lives in the
   // portfolio (T.lt) so it carries over correctly between app updates.
   const latch = (entry, exit) => ({ e: entry.map(Boolean), x: exit.map(Boolean) });
@@ -105,6 +119,19 @@
     bollinger_reversion: { label: 'Bollinger reversion', fn: (b) => {
       const mid = sma(b.c, 20), sd = rollStd(b.c, 20);
       return latch(b.c.map((c, i) => c < mid[i] - 2 * sd[i]), b.c.map((c, i) => c > mid[i])); } },
+    // ---- volume, breakout, combined-score and trend-hold strategies
+    obv_trend: { label: 'Volume trend (OBV)', fn: (b) => {
+      const o = obv(b), oe = ema(o, 50), s50 = sma(b.c, 50);
+      return latch(b.c.map((c, i) => o[i] > oe[i] && c > s50[i] && o[i] >= o[i - 20]), b.c.map((c, i) => o[i] < oe[i] && c < s50[i])); } },
+    vol_breakout: { label: '55-day breakout on volume', fn: (b) => {
+      const hi = rollPrev(b.h, 55, (w) => Math.max(...w)), va = sma(b.v, 20), s50 = sma(b.c, 50);
+      return latch(b.c.map((c, i) => c > hi[i] && va[i] > 0 && b.v[i] > 1.3 * va[i]), b.c.map((c, i) => c < s50[i])); } },
+    score: { label: 'Signal score (trend + momentum + volume)', fn: (b) => {
+      const sc = signalScore(b);
+      return latch(sc.map((x) => x >= 4), sc.map((x) => x <= 2)); } },
+    trend_hold: { label: 'Trend hold (above 200-day)', fn: (b) => {
+      const s200 = sma(b.c, 200);
+      return latch(b.c.map((c, i) => c > s200[i] * 1.01), b.c.map((c, i) => c < s200[i] * 0.97)); } },
     // ---- quick (short-swing) strategies: fast entries; exits mostly via profit target / stop / time limit
     quick_dip: { label: 'Quick dip (RSI-2)', quick: true, fn: (b) => {
       const r = rsi(b.c, 2), s200 = sma(b.c, 200), s5 = sma(b.c, 5);
@@ -166,6 +193,7 @@
       const n = niftyByDate(d), aa = a[i];
       return {
         market_down: !!(n && n.c < n.s200),
+        market_gap: n && n.s200 ? Math.round((n.c / n.s200 - 1) * 1000) / 10 : 0,
         extended: !isn(s50[i]) && aa > 0 && (adj.c[i] - s50[i]) / (aa * f[i]) > 3,
         low_volume: vAvg[i] > 0 && adj.v[i] / vAvg[i] < 0.8,
         high_vol: !isn(atrPctAvg[i]) && atrPct[i] > 1.5 * atrPctAvg[i],
@@ -223,6 +251,9 @@
     if (t.qty > 0 && t.tp && h >= t.tp) { closed = tSell(t, day, Math.max(o, t.tp), 'target'); t.armed = false; }
     if (t.qty > 0) t.trades[t.trades.length - 1].bars++;
     if (target === 0) t.armed = true;
+    // join trends: don't wait for a fresh signal – buy a trend that is already on, and re-enter 10 sessions after a stop/target/time exit
+    if (t.join && !t.armed && t.qty === 0 && !closed) { if (t.cool > 0) t.cool--; else t.armed = true; }
+    if (closed && closed.r !== 'signal') t.cool = 10;
     if (t.qty === 0 && target === 1 && t.armed && allow) {
       t.pending = 'BUY'; t.pAtr = a && !isn(a) ? a : 0; t.pFeat = feat; t.pStrat = strat;
     } else if (t.qty > 0 && target === 0) t.pending = 'SELL';
@@ -377,6 +408,7 @@
   function review(st, sym, T, date) {
     const B = brainParams(st), scores = {}, allowed = allowedStrategies(B);
     if (B.quick) return reviewQuick(st, sym, T, date, B, allowed);
+    if (B.beat) { if (T.active) { logEvent(st, date, `${sym.replace('.NS', '')}: ${STRATEGIES[T.active].label} → stay invested (Beat the Nifty)`, 'switch'); T.active = null; } T.scores = {}; return; }
     for (const k in T.shadows) if (allowed.includes(k)) scores[k] = sharpe(T.shadows[k].eq, B.scoreWindow);
     T.scores = scores;
     let best = null, bestS = -Infinity;
@@ -406,6 +438,7 @@
     return null;
   }
   function noteMistake(st, sym, cl, d) {
+    if (cl && brainParams(st).beat) return;
     if (!cl || !(cl.ret < MEM_LOSS) || !cl.f || !cl.s || !brainParams(st).useMemory) return;
     const keys = Object.keys(FEATURES).filter((k) => cl.f[k]); if (!keys.length) return;
     const M = st.learning.mistakes = st.learning.mistakes || [], id = `${sym}|${cl.s}|${keys.join('+')}`;
@@ -509,6 +542,7 @@
     const { st, data, nl, prep, dates } = ctx;
     const cap = st.cfg.closedCap || 1500, B = brainParams(st);
     ctx.allowed = allowedStrategies(B);
+    for (const sym in prep) { const T = st.tickers[sym]; [T.live, T.sim, ...Object.values(T.shadows)].forEach((t) => { t.join = !!B.join; }); }
     const end = Math.min(dates.length, ctx.pos + n);
     for (; ctx.pos < end; ctx.pos++) {
       const d = dates[ctx.pos];
@@ -530,9 +564,13 @@
         const pm = d >= st.paperStart ? pauseOn(st, d) : null;
         // quick mode: any quick strategy that has been making money on this stock may trigger an entry
         const qfire = B.quick && T.quickSet && T.quickSet.length ? T.quickSet.find((k) => tg[k] === 1) : null;
-        const tgt = T.removing || pm === 'stop' ? 0 : B.quick ? (qfire ? 1 : 0) : T.active ? tg[T.active] : 0;
-        const why = qfire || T.active;
-        const blk = blocked(st, feat), mem = tgt === 1 ? memBlock(st, sym, why, feat) : null;
+        // idle money: with no trusted strategy, either sit in cash or ride the stock while it AND the Nifty are in uptrends
+        const idleOn = !B.quick && !T.active && (B.idle === 'trend' ? !feat.market_down && tg.trend_hold === 1
+          : B.idle === 'core' ? !(feat.market_down && feat.below_200) : B.idle === 'market' ? !feat.market_down
+          : B.idle === 'crash' ? !(T.crashOff = feat.market_gap < -B.crashGap ? true : feat.market_gap > 0 ? false : !!T.crashOff) : false);
+        const tgt = T.removing || pm === 'stop' ? 0 : B.quick ? (qfire ? 1 : 0) : T.active ? tg[T.active] : idleOn ? 1 : 0;
+        const why = qfire || T.active || (idleOn ? (B.idle === 'trend' ? 'trend_hold' : 'hold') : null);
+        const blk = B.beat ? [] : blocked(st, feat), mem = tgt === 1 && !B.beat ? memBlock(st, sym, why, feat) : null;
         const allow = blk.length === 0 && !mem && !pm && !T.removing;
         if (d >= st.warmStart && d < st.paperStart) {
           if (mem && T.sim.qty === 0 && T.sim.armed && !T.sim.pending) mem.blocked = (mem.blocked || 0) + 1;
@@ -718,6 +756,9 @@
     maxDays: [0, 5, 10, 20],
     quickEdge: [0, 0.1, 0.3, 0.6],
     useMemory: [true, false],
+    idle: ['cash', 'trend', 'core'],
+    crashGap: [5, 8, 12, 100],
+    join: [false, true],
   };
   const PARAM_LABELS = {
     stopAtr: (v) => (v ? `stop-loss ${v}× ATR` : 'no stop-loss'),
@@ -731,6 +772,10 @@
     maxDays: (v) => (v ? `sell after ${v} sessions at most` : 'no time limit'),
     quickEdge: (v) => `quick: use strategies averaging > +${v}% a trade`,
     useMemory: (v) => (v ? 'never repeat a noted mistake' : 'no mistake memory'),
+    idle: (v) => (v === 'trend' ? 'idle money rides uptrends' : v === 'core' ? 'idle money stays invested unless the stock and the market both turn down' : v === 'market' ? 'idle money stays invested while the Nifty is above its 200-day average' : 'idle money stays in cash'),
+    join: (v) => (v ? 'join trends already under way' : 'wait for a fresh signal'),
+    crashGap: (v) => (v >= 100 ? 'never sell for a market fall' : `step aside when the Nifty is ${v}% below its 200-day average`),
+    beat: (v) => (v ? 'Beat the Nifty: stay invested' : 'pick strategies per stock'),
     strategies: (v) => {
       if (!v) return 'use all strategies of that style';
       const pool = STRATEGIES[v[0]].quick ? QUICK : NORMAL;
@@ -744,7 +789,7 @@
     n.quick = !!n.quick;
     const pool = n.quick ? QUICK : NORMAL;
     n.strategies = n.strategies ? pool.filter((k) => n.strategies.includes(k)) : null;
-    if (n.strategies && (n.strategies.length < 2 || n.strategies.length >= pool.length)) n.strategies = null;
+    if (n.strategies && (n.strategies.length < 1 || n.strategies.length >= pool.length)) n.strategies = null;
     return n;
   };
   const paramKey = (p) => JSON.stringify(normParams(p));
@@ -857,7 +902,7 @@
   function applyParams(st, params, today, nowIso) {
     const n = normParams(params), before = brainParams(st);
     st.cfg.brain = { reviewEvery: n.reviewEvery, minScore: n.minScore, scoreWindow: n.scoreWindow, useRules: n.useRules, ruleMargin: n.ruleMargin, strategies: n.strategies,
-      quick: n.quick, tpAtr: n.tpAtr, maxDays: n.maxDays, quickEdge: n.quickEdge, useMemory: n.useMemory };
+      quick: n.quick, tpAtr: n.tpAtr, maxDays: n.maxDays, quickEdge: n.quickEdge, useMemory: n.useMemory, idle: n.idle, join: n.join, crashGap: n.crashGap, beat: n.beat };
     st.cfg.stopAtr = n.stopAtr;
     Object.values(st.tickers).forEach((T) => { [T.live, T.sim, ...Object.values(T.shadows)].forEach((t) => { t.stopAtr = n.stopAtr; t.tpAtr = n.tpAtr; t.maxDays = n.maxDays; }); });
     // switching style: the brain must pick a strategy of the new style at the next review
@@ -1135,6 +1180,14 @@
     const edge = (p - base5.up) * 100, nTot = usable.reduce((s, x) => s + x.h5.n, 0);
     const lean = !usable.length || Math.abs(edge) < 3 || nTot < 20 ? 'none' : edge > 0 ? 'up' : 'down';
     const strength = lean === 'none' ? 'no clear edge' : Math.abs(edge) >= 8 && nTot >= 60 ? 'moderate' : 'slight';
+    // the "call": signal score 0–5 with its components and how each call did on this stock (next 20 sessions)
+    const sc = signalScore(b), r14 = rsi(b.c, 14), mm = macd(b.c), s200 = sma(b.c, 200), ob = obv(b), va = sma(b.v, 20);
+    const callOf = (x) => (x >= 4 ? 'buy' : x <= 1 ? 'sell' : 'hold');
+    const rec = {}; for (const k of ['buy', 'hold', 'sell']) rec[k] = fwdStats(b.c, sc.map((x) => callOf(x) === k), 20);
+    const call = { score: sc[last], call: callOf(sc[last]), rec, base: base20,
+      parts: [['Price above 50-day average', b.c[last] > s50[last]], ['50-day above 200-day average', s50[last] > s200[last]], ['MACD above its signal', mm.line[last] > mm.signal[last]],
+        ['RSI strong but not stretched (50–75)', r14[last] >= 50 && r14[last] <= 75], ['Volume flow (OBV) rising over 20 sessions', ob[last] > ob[last - 20]]],
+      volRatio: va[last] > 0 ? b.v[last] / va[last] : null, rsi: r14[last], hist: sc.slice(-80) };
     const K = Math.min(80, n), sl = (a) => a.slice(n - K).map((x) => (x == null || isn(x) ? null : Math.round(x * 100) / 100));
     const marks = [];
     for (let j = n - K; j < n; j++) for (const k in SIGNALS) if (SIGNALS[k].kind === 'candle' && SIGNALS[k].dir !== 'neutral' && F[k][j]) marks.push({ i: j - (n - K), dir: SIGNALS[k].dir, key: k });
@@ -1143,7 +1196,7 @@
       base: { h5: base5, h20: base20 }, active, recent: recent.sort((x, y) => x.ago - y.ago).slice(0, 4),
       outlook: { p5: p, edge, lean, strength, n: nTot },
       levels: srLevels(b), proj: projection(b.c, 60, 10), trend,
-      chart: { d: b.d.slice(n - K), o: sl(b.o), h: sl(b.h), l: sl(b.l), c: sl(b.c), s20: sl(s20), s50: sl(s50), marks },
+      chart: { d: b.d.slice(n - K), o: sl(b.o), h: sl(b.h), l: sl(b.l), c: sl(b.c), s20: sl(s20), s50: sl(s50), v: b.v.slice(n - K), obv: ob.slice(n - K), marks }, call,
     };
   }
 
@@ -1188,7 +1241,7 @@
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
     predict, SIGNALS, signalMatrix, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
-    migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
+    migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, BEAT_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
