@@ -234,6 +234,8 @@
     st.pauses = st.pauses || [];
     st.runs = st.runs || [];
     st.archive = st.archive || [];
+    st.trainings = st.trainings || [];
+    st.learning.trained = st.learning.trained || [];
     st.equity.forEach((r) => { if (r.length < 4) r[3] = st.invested - st.withdrawn; });
     st.v = 2;
     return st;
@@ -319,7 +321,8 @@
   }
 
   function updateRules(st, date) {
-    const L = st.learning, recent = L.closed.slice(-RULE_WINDOW);
+    // evidence = trades the brain lived through recently + anything it was taught in training mode
+    const L = st.learning, recent = (L.trained || []).concat(L.closed.slice(-RULE_WINDOW));
     for (const k in FEATURES) {
       const w = recent.filter((t) => t.f && t.f[k]), wo = recent.filter((t) => t.f && !t.f[k]);
       const mean = (a) => (a.length ? a.reduce((s, t) => s + t.ret, 0) / a.length : NaN);
@@ -365,7 +368,12 @@
    * Process every new trading day for all stocks, date by date.
    * data: { [sym]: parsed }, nifty: parsed. Returns summary of what happened.
    */
-  function run(st, data, nifty, nowMs) {
+  /**
+   * Process every new trading day for all stocks, date by date.
+   * data: { [sym]: parsed }, nifty: parsed. Returns summary of what happened.
+   * begin() + stepDays() + finish() let the UI replay history day by day (training mode).
+   */
+  function begin(st, data, nifty, nowMs) {
     migrate(st);
     st._now = new Date(nowMs || Date.now()).toISOString();
     const nl = niftyLookup(nifty.bars);
@@ -381,8 +389,16 @@
     const dates = [...new Set(Object.values(prep).flatMap((p) => p.raw.d))].sort()
       .filter((d) => st.lastDate === null || d > st.lastDate);
     const before = { trades: liveTradeCount(st), events: st.learning.events.length };
+    return { st, data, nl, prep, dates, pos: 0, before, nowMs };
+  }
 
-    for (const d of dates) {
+  /** Process up to n more days. Returns how many days are left. */
+  function stepDays(ctx, n) {
+    const { st, data, nl, prep, dates } = ctx;
+    const cap = st.cfg.closedCap || 1500;
+    const end = Math.min(dates.length, ctx.pos + n);
+    for (; ctx.pos < end; ctx.pos++) {
+      const d = dates[ctx.pos];
       for (const sym in prep) {
         const P = prep[sym], i = P.idx[d]; if (i === undefined || i < P.ready) continue;
         const T = st.tickers[sym], R = P.raw, feat = P.feats[i], a = P.atr[i];
@@ -394,7 +410,7 @@
         for (const k in T.shadows) {
           const cl = onBar(T.shadows[k], d, R.o[i], R.h[i], R.l[i], R.c[i], tg[k], a, true, feat, k);
           if (cl) { st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
-            if (st.learning.closed.length > 1500) st.learning.closed.shift(); }
+            if (st.learning.closed.length > cap) st.learning.closed.shift(); }
         }
         if (++T.sinceReview >= REVIEW_EVERY) { T.sinceReview = 0; review(st, sym, T, d); }
         const pm = d >= st.paperStart ? pauseOn(st, d) : null;
@@ -416,15 +432,69 @@
         const T = st.tickers[sym];
         if (T.removing && T.live.qty === 0 && !T.live.pending) { finishRemove(st, sym, d); delete prep[sym]; }
       }
-      const n = nl(d), tot = (k) => Object.values(st.tickers).reduce((s, T) => s + equity(T[k], T.lastClose || 0), 0);
-      if (d >= st.warmStart && d < st.paperStart) st.sim.push([d, Math.round(tot('sim')), n ? n.c : null]);
-      if (d >= st.paperStart) st.equity.push([d, Math.round(tot('live')), n ? n.c : null, Math.round(st.invested - st.withdrawn)]);
+      const nn = nl(d), tot = (k) => Object.values(st.tickers).reduce((s, T) => s + equity(T[k], T.lastClose || 0), 0);
+      if (d >= st.warmStart && d < st.paperStart) st.sim.push([d, Math.round(tot('sim')), nn ? nn.c : null]);
+      if (d >= st.paperStart) st.equity.push([d, Math.round(tot('live')), nn ? nn.c : null, Math.round(st.invested - st.withdrawn)]);
       st.lastDate = d;
     }
-    st.lastFetch = nowMs || Date.now();
+    return dates.length - ctx.pos;
+  }
+
+  /** Run instantly up to (not including) `date` – used to skip the warm-up before a training period. */
+  function skipTo(ctx, date) {
+    let n = 0; while (ctx.pos + n < ctx.dates.length && ctx.dates[ctx.pos + n] < date) n++;
+    stepDays(ctx, n);
+  }
+  const daysLeft = (ctx) => ctx.dates.length - ctx.pos;
+
+  function finish(ctx) {
+    const st = ctx.st;
+    st.lastFetch = ctx.nowMs || Date.now();
     delete st._now;
-    return { days: dates.length, newTrades: liveTradeCount(st) - before.trades,
-      newEvents: st.learning.events.slice(before.events) };
+    return { days: ctx.pos, newTrades: liveTradeCount(st) - ctx.before.trades,
+      newEvents: st.learning.events.slice(ctx.before.events) };
+  }
+
+  function run(st, data, nifty, nowMs) {
+    const ctx = begin(st, data, nifty, nowMs);
+    stepDays(ctx, Infinity);
+    return finish(ctx);
+  }
+
+  // ------------------------------------------------------------------ training on the past
+  const tradeKey = (t) => `${t.sym}|${t.s}|${t.e}|${t.x}`;
+  /**
+   * A throw-away account that paper trades a past period [start, end].
+   * lessons: earlier closed trades to start with (only ones that ended before `start`, so no peeking ahead).
+   */
+  function newTraining(cfg, start, end, lessons) {
+    const st = newState({ ...cfg, warmYears: 0, closedCap: 8000 }, start);
+    st.training = { start, end };
+    st.learning.trained = (lessons || []).filter((t) => t.x && t.x < start);
+    return st;
+  }
+  /** Lessons a training run could start with: everything known that ended before `start`. */
+  function lessonsBefore(st, start) {
+    return [...(st.learning.trained || []), ...st.learning.closed].filter((t) => t.x && t.x < start);
+  }
+  /** Copy what a training run experienced into the live brain's evidence pool and re-check the rules. */
+  /** What teaching would change, without changing anything. */
+  function previewTeach(st, tr, today) {
+    const copy = migrate(JSON.parse(JSON.stringify(st)));
+    return teach(copy, tr, today, 'preview');
+  }
+  function teach(st, tr, today, label) {
+    migrate(st);
+    const pool = st.learning.trained = st.learning.trained || [];
+    const seen = new Set(pool.map(tradeKey)), before = Object.keys(FEATURES).filter((k) => st.learning.rules[k]?.active);
+    let added = 0;
+    for (const t of tr.learning.closed) { const k = tradeKey(t); if (!seen.has(k)) { pool.push({ ...t, src: 'train' }); seen.add(k); added++; } }
+    pool.sort((a, b) => a.x.localeCompare(b.x));
+    if (pool.length > 6000) pool.splice(0, pool.length - 6000);
+    logEvent(st, today, `Training ${label}: added ${added} past trades to the brain's evidence`, 'learn');
+    updateRules(st, today);
+    const after = Object.keys(FEATURES).filter((k) => st.learning.rules[k]?.active);
+    return { added, newRules: after.filter((k) => !before.includes(k)), dropped: before.filter((k) => !after.includes(k)) };
   }
 
   function liveTradeCount(st) { // entries + exits so far
@@ -470,6 +540,7 @@
 
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
-    migrate, pauseOn, isPaused, setPause, addTicker, removeTicker };
+    migrate, pauseOn, isPaused, setPause, addTicker, removeTicker,
+    begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(this);

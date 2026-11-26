@@ -131,6 +131,7 @@
 
   async function update() {
     if (!st) return;
+    if (train.phase === 'loading') { cancel = true; return; }
     if (busy) { cancel = true; $('updateBtn').textContent = 'Stopping…'; return; }
     busy = true; cancel = false;
     const btn = $('updateBtn'); btn.textContent = 'Stop'; btn.classList.add('stop');
@@ -363,6 +364,7 @@
       <div class="row"><div><b>Daily equity</b><div class="m">Date, account value, capital, return, Nifty</div></div><button class="btn sm" data-dl="equity">CSV</button></div>
       <div class="row"><div><b>Brain log</b><div class="m">Every switch, lesson and action, with timestamps</div></div><button class="btn sm" data-dl="brain">CSV</button></div>
       <div class="row"><div><b>Update history</b><div class="m">When each update ran, what it processed, stopped or failed</div></div><button class="btn sm" data-dl="runs">CSV</button></div>
+      <div class="row"><div><b>Training runs</b><div class="m">Every past-period training: dates, return vs Nifty, drawdown, trades</div></div><button class="btn sm" data-dl="trainings">CSV</button></div>
       <div class="row"><div><b>Full backup</b><div class="m">Everything, as JSON</div></div><button class="btn sm" data-dl="backup">JSON</button></div>
       <p class="m" style="margin:8px 0 0">File names include the export time, e.g. moli-trades-2026-11-26_16-30-05.csv</p></div>`;
     h += `<div class="sec">Account</div><div class="card">
@@ -370,6 +372,188 @@
       <div class="row"><div><b>Settings</b><div class="m">Stop ${st.cfg.stopAtr}× ATR · risk ${st.cfg.riskPct ? st.cfg.riskPct + '%' : 'full slice'} · ${st.cfg.warmYears}y practice</div></div></div>
       <div class="actions"><button class="btn warn sm" id="s_del">Delete account &amp; start over</button></div></div>`;
     return h;
+  }
+
+
+  // ---------------------------------------------------------------- training on the past
+  const MIN_TRAIN = '2008-01-01';
+  let train = { phase: 'setup', preset: '5y', from: '', to: '', brain: 'fresh', speed: 4 };
+  const yearsAgo = (n) => { const d = new Date(todayIST() + 'T00:00:00Z'); d.setUTCFullYear(d.getUTCFullYear() - n); return d.toISOString().slice(0, 10); };
+  const PRESETS = {
+    '1y': ['Last year', () => [yearsAgo(1), todayIST()]],
+    '3y': ['Last 3 years', () => [yearsAgo(3), todayIST()]],
+    '5y': ['Last 5 years', () => [yearsAgo(5), todayIST()]],
+    '10y': ['Last 10 years', () => [yearsAgo(10), todayIST()]],
+    covid: ['COVID crash 2019–21', () => ['2019-07-01', '2021-06-30']],
+    gfc: ['2008 crisis 2008–10', () => ['2008-01-01', '2010-12-31']],
+    custom: ['Custom dates', () => [train.from || yearsAgo(3), train.to || todayIST()]],
+  };
+  const SPEEDS = [1, 4, 16, 64]; // × 2 trading days per second
+  const trainUrl = (s, p1, p2) => `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?period1=${p1}&period2=${p2}&interval=1d&events=div%2Csplit`;
+  const down = (v, n) => (v.length <= n ? v : Array.from({ length: n }, (_, i) => v[Math.round((i * (v.length - 1)) / (n - 1))]));
+
+  function trainRange() {
+    let [a, b] = PRESETS[train.preset][1]();
+    if (a < MIN_TRAIN) a = MIN_TRAIN;
+    if (b > todayIST()) b = todayIST();
+    return [a, b];
+  }
+
+  async function startTraining() {
+    if (busy) return toast('Wait for the update to finish');
+    const [start, end] = trainRange();
+    if ((Date.parse(end) - Date.parse(start)) / 864e5 < 90) return toast('Pick a period of at least 3 months');
+    busy = true; cancel = false;
+    train = { ...train, phase: 'loading', start, end, label: train.preset === 'custom' ? `${fdate(start)} – ${fdate(end)}` : PRESETS[train.preset][0] };
+    render();
+    const btn = $('updateBtn'); btn.textContent = 'Stop'; btn.classList.add('stop');
+    const p1 = Math.floor(Date.parse(start) / 1000) - 760 * 86400, p2 = Math.floor(Date.parse(end) / 1000) + 86400;
+    const syms = [NIFTY, ...st.cfg.tickers], data = {}, missing = [];
+    let nifty = null;
+    try {
+      for (let i = 0; i < syms.length; i++) {
+        if (cancel) throw new Error('stopped');
+        progress(i, syms.length, `Downloading ${syms[i] === NIFTY ? 'Nifty 50' : sym(syms[i])} history`);
+        try {
+          const p = E.parseYahoo(await httpGet(trainUrl(syms[i], p1, p2)));
+          if (syms[i] === NIFTY) nifty = p; else if (p.bars.d.length > 260) data[syms[i]] = p; else missing.push(sym(syms[i]));
+        } catch (e) { if (syms[i] === NIFTY) throw e; missing.push(sym(syms[i])); }
+      }
+      if (cancel) throw new Error('stopped');
+      const tickers = st.cfg.tickers.filter((t) => data[t]);
+      if (!tickers.length) throw new Error('No stock has data for that period');
+      const lessons = train.brain === 'lessons' ? E.lessonsBefore(st, start) : [];
+      const tst = E.newTraining({ ...st.cfg, tickers, capital: st.slice * tickers.length }, start, end, lessons);
+      progress(syms.length, syms.length, 'Warming up');
+      await new Promise((ok) => setTimeout(ok, 30));
+      const ctx = E.begin(tst, data, nifty, Date.now());
+      E.skipTo(ctx, start);
+      Object.assign(train, { phase: 'running', tst, ctx, playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx) });
+      train.timer = setInterval(trainTick, 100);
+    } catch (e) {
+      toast(e.message === 'stopped' ? 'Training cancelled' : 'Could not load history – ' + e.message);
+      train.phase = 'setup';
+    }
+    busy = false; cancel = false;
+    btn.textContent = 'Update'; btn.classList.remove('stop'); $('progress').hidden = true;
+    render();
+  }
+
+  function trainTick() {
+    if (!train.ctx || !train.playing) return;
+    train.acc += (train.speed * 2) / 10;
+    const n = Math.floor(train.acc); train.acc -= n;
+    if (n > 0 && E.stepDays(train.ctx, n) === 0) return trainDone();
+    if (tab === 'train') render();
+  }
+
+  function trainDone() {
+    clearInterval(train.timer);
+    E.finish(train.ctx);
+    const tst = train.tst, eq = tst.equity, idx = returnIndex(eq);
+    const nf = eq.filter((r) => r[2]), trades = Object.entries(tst.tickers).flatMap(([s, t]) => t.live.trades.map((x) => ({ ...x, sym: s })));
+    const S = E.stats(trades);
+    const sum = { id: Date.now().toString(36), at: nowIso(), label: train.label, start: eq[0]?.[0] || train.start, end: eq[eq.length - 1]?.[0] || train.end,
+      brain: train.brain, stocks: Object.keys(tst.tickers).length, ret: idx.length ? idx[idx.length - 1] - 100 : 0,
+      nret: nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null, dd: maxDD(idx), trades: S.n, win: S.winRate,
+      pnl: S.pnl, taught: false, curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
+    st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
+    store.save(st);
+    Object.assign(train, { phase: 'done', playing: false, summary: sum, trades, preview: E.previewTeach(st, tst, todayIST()) });
+    if (tab === 'train') render(); else toast('Training finished – see the Train tab');
+  }
+
+  function teachLive() {
+    const r = E.teach(st, train.tst, todayIST(), `${train.summary.label} (${fdate(train.summary.start)} – ${fdate(train.summary.end)})`);
+    train.summary.taught = true;
+    const h = st.trainings.find((x) => x.id === train.summary.id); if (h) h.taught = true;
+    store.save(st); train.preview = null; render();
+    toast(`Live brain learned from ${r.added} past trades`);
+  }
+
+  function viewTrain() {
+    const ph = train.phase;
+    if (ph === 'loading') return `<div class="card hero"><div class="big" style="font-size:24px">Loading history…</div><p class="sub">${esc(train.label)}. Tap Stop to cancel.</p></div>`;
+    if (ph === 'running' || ph === 'done') {
+      const tst = train.tst, eq = tst.equity, idx = returnIndex(eq), last = eq[eq.length - 1];
+      const nf = eq.filter((r) => r[2]), nret = nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null;
+      const ret = idx.length ? idx[idx.length - 1] - 100 : 0, done = train.total - E.daysLeft(train.ctx);
+      let h = `<div class="card hero"><div class="m">${ph === 'done' ? 'Training finished' : 'Trading the past'} · ${esc(train.label)}</div>
+        <div class="big" style="font-size:28px">${last ? fdate(last[0]) : fdate(train.start)}</div>
+        <p class="sub"><b class="${cls(ret)}">${pct(ret, 1)}</b> · ${inr(last ? last[1] : 0)}${nret != null ? ` · Nifty ${pct(nret)}` : ''}${idx.length > 1 ? ` · max drawdown ${pct(maxDD(idx))}` : ''}</p>
+        ${pnlChart(down(idx, 400))}
+        <div class="progress" style="padding:10px 0 0"><div class="bar" style="width:${Math.round((done / Math.max(train.total, 1)) * 100)}%"></div></div>
+        <div class="m" style="margin-top:6px">${done}/${train.total} sessions${ph === 'running' && train.playing ? ` · about ${Math.ceil((train.total - done) / (train.speed * 2))}s left` : ''}</div>`;
+      if (ph === 'running') {
+        h += `<div class="actions"><button class="btn sm" id="t_play">${train.playing ? 'Pause' : 'Play'}</button>
+          ${SPEEDS.map((x) => `<button class="chip ${x === train.speed ? 'on' : ''}" data-speed="${x}">${x}×</button>`).join('')}
+          <button class="btn ghost sm" id="t_skip">Skip to end</button><button class="btn warn sm" id="t_stop">Stop</button></div>`;
+      }
+      h += `</div>`;
+      if (train.missing && train.missing.length) h += `<p class="note" style="margin-top:0">No data for ${esc(train.missing.join(', '))} in this period – left out.</p>`;
+      if (ph === 'done') {
+        const s = train.summary, P = train.preview;
+        h += `<div class="card"><div class="grid">
+          <div><div class="m">Trades</div><div class="stat">${s.trades}</div></div>
+          <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(s.win) ? '–' : Math.round(s.win * 100) + '%'}</div></div>
+          <div style="margin-top:10px"><div class="m">Net P&amp;L</div><b class="${cls(s.pnl)}">${inr(s.pnl)}</b></div>
+          <div style="margin-top:10px"><div class="m">vs Nifty</div><b class="${cls(s.ret - (s.nret || 0))}">${s.nret == null ? '–' : pct(s.ret - s.nret) + ' pts'}</b></div></div></div>`;
+        h += `<div class="sec">Teach the live brain</div><div class="card">`;
+        if (s.taught) h += `<p class="empty">Done – your live brain now includes these ${train.tst.learning.closed.length} past trades as evidence.</p>`;
+        else {
+          const ch = [...P.newRules.map((k) => `<li>Start avoiding: ${esc(E.FEATURES[k].label.toLowerCase())}</li>`), ...P.dropped.map((k) => `<li>Stop avoiding: ${esc(E.FEATURES[k].label.toLowerCase())}</li>`)];
+          h += `<p class="sub" style="margin:0">Adds ${P.added} past trades (from all ${Object.keys(E.STRATEGIES).length} strategies) to the evidence your live brain uses for its rules.</p>
+            <ul class="tags">${ch.length ? ch.join('') : '<li>No rule would change right now – it just adds evidence.</li>'}</ul>
+            <div class="actions"><button class="btn sm" id="t_teach"${P.added ? '' : ' disabled'}>Teach my live brain</button></div>`;
+        }
+        h += `</div>`;
+        const tally = {};
+        train.trades.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
+        const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+        if (tl.length) h += `<div class="sec">Mistakes in this period</div><div class="card">` + tl.slice(0, 5).map(([g, n]) => `<div class="row"><div>${esc(g)}</div><div class="r"><b>${n}</b></div></div>`).join('') + `</div>`;
+        h += `<div class="actions"><button class="btn ghost sm" data-dl="training">Download trades CSV</button><button class="btn sm" id="t_new">Train again</button></div>`;
+      }
+      const evs = tst.learning.events.filter((e) => e.date >= train.start).slice(-8).reverse();
+      const tr = Object.entries(tst.tickers).flatMap(([s, t]) => t.live.trades.map((x) => ({ ...x, sym: s }))).sort((a, b) => (b.x || b.e).localeCompare(a.x || a.e)).slice(0, 8);
+      h += `<div class="sec">Latest trades</div><div class="card">` + (tr.length ? tr.map((t) => `<div class="row"><div><b>${sym(t.sym)}</b> <span class="m">${esc(E.STRATEGIES[t.s]?.label || '')}</span><div class="m">${fdate(t.e)} → ${t.x ? fdate(t.x) + (t.r === 'stop' ? ' (stop)' : '') : 'open'}</div></div><div class="r">${t.x ? `<b class="${cls(t.ret)}">${pct(t.ret)}</b>` : '<span class="m">holding</span>'}</div></div>`).join('') : '<p class="empty">No trades yet.</p>') + `</div>`;
+      h += `<div class="sec">Brain</div><div class="card">` + (evs.length ? evs.map((e) => `<div class="ev"><span class="d">${fdate(e.date)}</span><br>${esc(e.text)}</div>`).join('') : '<p class="empty">Nothing yet.</p>') + `</div>`;
+      return h;
+    }
+    // setup
+    const [a, b] = trainRange();
+    let h = `<div class="card hero"><div class="big" style="font-size:24px">Train on the past</div>
+      <p class="sub">A separate practice account trades a past period day by day with your ${st.cfg.tickers.length} stocks, as if it were live – it never sees the future. Watch it, then let your live brain learn from what happened.</p></div>
+      <div class="sec">Period</div><div class="card"><div class="chips" style="margin:0">${Object.entries(PRESETS).map(([k, v]) => `<button class="chip ${train.preset === k ? 'on' : ''}" data-preset="${k}">${v[0]}</button>`).join('')}</div>`;
+    if (train.preset === 'custom') h += `<div class="grid"><div><label>From</label><input type="date" id="t_from" min="${MIN_TRAIN}" max="${todayIST()}" value="${a}"></div><div><label>To</label><input type="date" id="t_to" min="${MIN_TRAIN}" max="${todayIST()}" value="${b}"></div></div>`;
+    h += `<p class="m" style="margin:12px 0 0">${fdate(a)} – ${fdate(b)} · about ${Math.round(((Date.parse(b) - Date.parse(a)) / 864e5) * 252 / 365)} sessions. Earliest: 2008 (Nifty data).</p></div>`;
+    const nl = E.lessonsBefore(st, a).length;
+    h += `<div class="sec">Brain</div><div class="card">
+      <label class="switch" style="margin:0"><input type="radio" name="tb" value="fresh" ${train.brain === 'fresh' ? 'checked' : ''}><span><b>Fresh brain</b> – learns only from this period</span></label>
+      <label class="switch" style="margin:12px 0 0"><input type="radio" name="tb" value="lessons" ${train.brain === 'lessons' ? 'checked' : ''}><span><b>With earlier lessons</b> – ${nl} trades that ended before ${fdate(a)} (an honest test: no future knowledge)</span></label></div>`;
+    h += `<div class="sec">Replay speed</div><div class="card"><div class="chips" style="margin:0">${SPEEDS.map((x) => `<button class="chip ${x === train.speed ? 'on' : ''}" data-speed="${x}">${x}× · ${x * 2} days/s</button>`).join('')}</div></div>
+      <div class="actions"><button class="btn" id="t_go">Start training</button></div>`;
+    if (st.trainings.length) {
+      h += `<div class="sec">Past training runs</div><div class="card">` + st.trainings.slice().reverse().map((x) => `<div class="row"><div><b>${esc(x.label)}</b><div class="m">${fdate(x.start)} – ${fdate(x.end)} · ${x.trades} trades · ${x.brain === 'fresh' ? 'fresh' : 'with lessons'}${x.taught ? ' · taught' : ''}</div></div>
+        <div class="r"><b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">Nifty ${pct(x.nret)}</div></div></div>`).join('') + `</div>`;
+    }
+    h += `<p class="note">Training reuses past data, so good results here can be luck or overfitting – the live paper account is the real test.</p>`;
+    return h;
+  }
+
+  function bindTrain() {
+    const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    document.querySelectorAll('[data-preset]').forEach((b) => { b.onclick = () => { train.preset = b.dataset.preset; render(); }; });
+    document.querySelectorAll('[data-speed]').forEach((b) => { b.onclick = () => { train.speed = +b.dataset.speed; render(); }; });
+    document.querySelectorAll('input[name=tb]').forEach((r) => { r.onchange = () => { train.brain = r.value; render(); }; });
+    const f = $('t_from'), t = $('t_to');
+    if (f) f.onchange = () => { train.from = f.value; render(); };
+    if (t) t.onchange = () => { train.to = t.value; render(); };
+    on('t_go', startTraining);
+    on('t_play', () => { train.playing = !train.playing; render(); });
+    on('t_skip', () => { E.stepDays(train.ctx, Infinity); trainDone(); });
+    on('t_stop', () => { train.ctx.dates.length = train.ctx.pos; trainDone(); });
+    on('t_teach', teachLive);
+    on('t_new', () => { train = { phase: 'setup', preset: train.preset, from: train.from, to: train.to, brain: train.brain, speed: train.speed }; render(); });
   }
 
   // ---------------------------------------------------------------- exports
@@ -386,6 +570,14 @@
       rows = [['phase', 'stock', 'strategy', 'status', 'entry_date', 'entry_price', 'qty', 'stop', 'exit_date', 'exit_price', 'exit_reason', 'pnl_inr', 'return_pct', 'entry_conditions', 'lessons', 'exported_at'],
         ...allLiveTrades().map((t) => one(t, 'paper')),
         ...Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.map((x) => one({ ...x, sym: s }, 'practice')))];
+    } else if (kind === 'training') {
+      const feats = (f) => (f ? Object.keys(E.FEATURES).filter((k) => f[k]).join('; ') : '');
+      name = `moli-training-${train.summary.start}_${train.summary.end}-${stamp}.csv`;
+      rows = [['training', 'stock', 'strategy', 'status', 'entry_date', 'entry_price', 'qty', 'stop', 'exit_date', 'exit_price', 'exit_reason', 'pnl_inr', 'return_pct', 'entry_conditions', 'lessons', 'exported_at'],
+        ...train.trades.map((t) => [train.summary.label, sym(t.sym), E.STRATEGIES[t.s]?.label || '', t.x ? 'closed' : 'open', t.e, r2(t.ep), t.q, r2(t.stop), t.x || '', r2(t.xp), t.r || '', r2(t.pnl), r2(t.ret), feats(t.f), t.x && t.pnl <= 0 ? E.diagnose(t).join('; ') : '', exported])];
+    } else if (kind === 'trainings') {
+      rows = [['ran_at_ist', 'label', 'from', 'to', 'brain', 'stocks', 'return_pct', 'nifty_return_pct', 'max_drawdown_pct', 'trades', 'win_rate_pct', 'pnl_inr', 'taught_live_brain'],
+        ...st.trainings.map((x) => [istStamp(Date.parse(x.at)), x.label, x.start, x.end, x.brain, x.stocks, r2(x.ret), r2(x.nret), r2(x.dd), x.trades, r2((x.win || 0) * 100), r2(x.pnl), x.taught ? 'yes' : 'no'])];
     } else if (kind === 'equity') {
       const idx = returnIndex(st.equity), sidx = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0]));
       rows = [['phase', 'date', 'account_value_inr', 'net_capital_inr', 'return_index', 'nifty_close', 'exported_at'],
@@ -462,9 +654,9 @@
     document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
     $('tabs').style.display = st ? '' : 'none';
     $('updateBtn').style.display = st ? '' : 'none';
-    const v = !st ? viewSetup() : { home: viewHome, stocks: viewStocks, brain: viewBrain, journal: viewJournal, more: viewMore }[tab]();
+    const v = !st ? viewSetup() : { home: viewHome, stocks: viewStocks, train: viewTrain, brain: viewBrain, journal: viewJournal, more: viewMore }[tab]();
     $('view').innerHTML = v + `<p class="note">Paper trading only – simulated, not investment advice. Past results don't predict the future. SEBI found 87.7% of individual F&amp;O traders lost money in FY26.</p>`;
-    bind(); setStatus();
+    bind(); if (tab === 'train') bindTrain(); setStatus();
   }
 
   document.querySelectorAll('#tabs a').forEach((a) => { a.onclick = () => { tab = a.dataset.tab; render(); window.scrollTo(0, 0); }; });
