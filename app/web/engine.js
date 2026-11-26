@@ -13,8 +13,11 @@
 (function (root) {
   'use strict';
   const TD = 252;
-  const REVIEW_EVERY = 21, SCORE_WINDOW = 250, MIN_HISTORY = 120, MIN_SCORE = 0.3, HYST = 0.2;
-  const RULE_MIN_N = 12, RULE_WINDOW = 400, RULE_MARGIN = 1.0, RF = 6;
+  const REVIEW_EVERY = 21, MIN_HISTORY = 120, HYST = 0.2, EQ_KEEP = 260;
+  const RULE_MIN_N = 12, RULE_WINDOW = 400, RF = 6;
+  // Brain settings: defaults, overridable per account (st.cfg.brain) – tuned by repeat-training mode.
+  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null };
+  const brainParams = (st) => ({ ...BRAIN_DEFAULTS, stopAtr: st.cfg.stopAtr, ...(st.cfg.brain || {}) });
 
   // ------------------------------------------------------------------ costs (algo/costs.py)
   function cost(t, side) {
@@ -203,14 +206,14 @@
       t.pending = 'BUY'; t.pAtr = a && !isn(a) ? a : 0; t.pFeat = feat; t.pStrat = strat;
     } else if (t.qty > 0 && target === 0) t.pending = 'SELL';
     t.eq.push(t.cash + t.qty * c);
-    if (t.eq.length > SCORE_WINDOW + 5) t.eq.shift();
+    if (t.eq.length > EQ_KEEP) t.eq.shift();
     return closed;
   }
   const equity = (t, price) => t.cash + t.qty * price;
 
-  function sharpe(eq) {
-    if (eq.length < MIN_HISTORY) return NaN;
-    const w = eq.slice(-SCORE_WINDOW - 1), r = [];
+  function sharpe(eq, window = 250) {
+    if (eq.length < Math.min(MIN_HISTORY, window)) return NaN;
+    const w = eq.slice(-window - 1), r = [];
     for (let i = 1; i < w.length; i++) r.push(w[i] / w[i - 1] - 1 - ((1 + RF / 100) ** (1 / TD) - 1));
     const m = r.reduce((s, x) => s + x, 0) / r.length;
     const sd = Math.sqrt(r.reduce((s, x) => s + (x - m) ** 2, 0) / (r.length - 1));
@@ -322,7 +325,7 @@
     const alloc = st.slice, sh = {};
     for (const k in STRATEGIES) sh[k] = newTrader(alloc, st.cfg);
     return (st.tickers[sym] = { shadows: sh, sim: newTrader(alloc, st.cfg), live: newTrader(alloc, st.cfg),
-      active: null, scores: {}, sinceReview: REVIEW_EVERY, lastClose: null, lt: {}, spark: { d: [], c: [] } });
+      active: null, scores: {}, sinceReview: brainParams(st).reviewEvery, lastClose: null, lt: {}, spark: { d: [], c: [] } });
   }
 
   function logEvent(st, date, text, kind, at) {
@@ -331,18 +334,18 @@
   }
 
   function review(st, sym, T, date) {
-    const scores = {};
-    for (const k in T.shadows) scores[k] = sharpe(T.shadows[k].eq);
+    const B = brainParams(st), scores = {}, allowed = B.strategies || Object.keys(STRATEGIES);
+    for (const k in T.shadows) if (allowed.includes(k)) scores[k] = sharpe(T.shadows[k].eq, B.scoreWindow);
     T.scores = scores;
     let best = null, bestS = -Infinity;
     for (const k in scores) if (!isn(scores[k]) && scores[k] > bestS) { best = k; bestS = scores[k]; }
     if (best === null) return;
     let cur = T.active; const curS = cur ? scores[cur] : -Infinity;
-    if (cur && !(curS >= MIN_SCORE)) cur = null;
-    if (bestS >= MIN_SCORE && (cur === null || bestS > curS + HYST)) cur = best;
+    if (cur && !(curS >= B.minScore)) cur = null;
+    if (bestS >= B.minScore && (cur === null || bestS > curS + HYST)) cur = best;
     if (cur !== T.active) {
       const from = T.active ? STRATEGIES[T.active].label : 'cash', to = cur ? STRATEGIES[cur].label : 'cash';
-      const why = cur ? `trailing-year Sharpe ${scores[cur].toFixed(2)}` : `no strategy above ${MIN_SCORE} Sharpe (best ${bestS.toFixed(2)})`;
+      const why = cur ? `trailing-year Sharpe ${scores[cur].toFixed(2)}` : `no strategy above ${B.minScore} Sharpe (best ${bestS.toFixed(2)})`;
       logEvent(st, date, `${sym.replace('.NS', '')}: ${from} → ${to} (${why})`, 'switch');
       T.active = cur;
     }
@@ -350,15 +353,15 @@
 
   function updateRules(st, date) {
     // evidence = trades the brain lived through recently + anything it was taught in training mode
-    const L = st.learning, recent = (L.trained || []).concat(L.closed.slice(-RULE_WINDOW));
+    const L = st.learning, recent = (L.trained || []).concat(L.closed.slice(-RULE_WINDOW)), M = brainParams(st).ruleMargin;
     for (const k in FEATURES) {
       const w = recent.filter((t) => t.f && t.f[k]), wo = recent.filter((t) => t.f && !t.f[k]);
       const mean = (a) => (a.length ? a.reduce((s, t) => s + t.ret, 0) / a.length : NaN);
       const mw = mean(w), mwo = mean(wo), win = (a) => (a.length ? a.filter((t) => t.ret > 0).length / a.length : NaN);
       const r = L.rules[k] || (L.rules[k] = { active: false, since: null });
       Object.assign(r, { nWith: w.length, meanWith: mw, nWithout: wo.length, meanWithout: mwo, winWith: win(w), winWithout: win(wo) });
-      const bad = w.length >= RULE_MIN_N && mw < 0 && mw < mwo - RULE_MARGIN;
-      const good = !(w.length >= RULE_MIN_N) || mw > 0 || mw > mwo - RULE_MARGIN / 4;
+      const bad = w.length >= RULE_MIN_N && mw < 0 && mw < mwo - M;
+      const good = !(w.length >= RULE_MIN_N) || mw > 0 || mw > mwo - M / 4;
       if (!r.active && bad) {
         r.active = true; r.since = date;
         logEvent(st, date, `Learned: avoid entries when ${FEATURES[k].label.toLowerCase()} – ${w.length} trades averaged ${mw.toFixed(1)}% vs ${mwo.toFixed(1)}% otherwise`, 'learn');
@@ -370,7 +373,7 @@
   }
 
   function blocked(st, feat) {
-    if (!feat) return [];
+    if (!feat || !brainParams(st).useRules) return [];
     return Object.keys(FEATURES).filter((k) => feat[k] && st.learning.rules[k] && st.learning.rules[k].active);
   }
 
@@ -404,14 +407,14 @@
   function begin(st, data, nifty, nowMs) {
     migrate(st);
     st._now = new Date(nowMs || Date.now()).toISOString();
-    const nl = niftyLookup(nifty.bars);
+    const nl = nifty._nl || (nifty._nl = niftyLookup(nifty.bars));
     const prep = {};
     for (const sym of st.cfg.tickers) {
       if (!data[sym] || !data[sym].bars.d.length) continue;
       const isNew = !st.tickers[sym] || st.tickers[sym].fresh;
       ensureTicker(st, sym);
       if (!isNew) applySplits(st, sym, data[sym].splits);
-      prep[sym] = prepare(data[sym].bars, nl);
+      prep[sym] = data[sym]._prep || (data[sym]._prep = prepare(data[sym].bars, nl));
       if (isNew && st.lastDate) preRoll(st, sym, prep[sym], data[sym]);
       delete st.tickers[sym].fresh;
     }
@@ -424,7 +427,7 @@
   /** Process up to n more days. Returns how many days are left. */
   function stepDays(ctx, n) {
     const { st, data, nl, prep, dates } = ctx;
-    const cap = st.cfg.closedCap || 1500;
+    const cap = st.cfg.closedCap || 1500, B = brainParams(st);
     const end = Math.min(dates.length, ctx.pos + n);
     for (; ctx.pos < end; ctx.pos++) {
       const d = dates[ctx.pos];
@@ -441,7 +444,7 @@
           if (cl) { st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
             if (st.learning.closed.length > cap) st.learning.closed.shift(); }
         }
-        if (++T.sinceReview >= REVIEW_EVERY) { T.sinceReview = 0; review(st, sym, T, d); }
+        if (++T.sinceReview >= B.reviewEvery) { T.sinceReview = 0; review(st, sym, T, d); }
         const pm = d >= st.paperStart ? pauseOn(st, d) : null;
         const tgt = T.removing || pm === 'stop' ? 0 : T.active ? tg[T.active] : 0;
         const blk = blocked(st, feat), allow = blk.length === 0 && !pm && !T.removing;
@@ -532,7 +535,7 @@
 
   /** A stock added later: let its shadow strategies and the brain catch up on past data first. */
   function preRoll(st, sym, P, D) {
-    const T = st.tickers[sym], R = P.raw;
+    const T = st.tickers[sym], R = P.raw, B = brainParams(st);
     for (let i = P.ready; i < R.d.length && R.d[i] <= st.lastDate; i++) {
       const d = R.d[i], feat = P.feats[i], a = P.atr[i], dv = D.divs[d];
       if (dv) Object.values(T.shadows).forEach((t) => { if (t.qty > 0) t.cash += t.qty * dv; });
@@ -541,12 +544,103 @@
         const cl = onBar(T.shadows[k], d, R.o[i], R.h[i], R.l[i], R.c[i], tg, a, true, feat, k);
         if (cl) st.learning.closed.push({ sym, s: k, e: cl.e, x: cl.x, ret: cl.ret, f: cl.f, r: cl.r, bars: cl.bars });
       }
-      if (++T.sinceReview >= REVIEW_EVERY) { T.sinceReview = 0; review(st, sym, T, d); }
+      if (++T.sinceReview >= B.reviewEvery) { T.sinceReview = 0; review(st, sym, T, d); }
       T.lastClose = R.c[i];
       T.spark.d.push(d); T.spark.c.push(R.c[i]);
       if (T.spark.d.length > 260) { T.spark.d.shift(); T.spark.c.shift(); }
     }
     review(st, sym, T, st.lastDate); T.sinceReview = 0;
+  }
+
+  // ------------------------------------------------------------------ repeat training (parameter search)
+  const ALL = Object.keys(STRATEGIES);
+  const SPACE = {
+    stopAtr: [0, 2, 3, 4, 5],
+    minScore: [0, 0.2, 0.3, 0.5, 0.8],
+    reviewEvery: [10, 21, 42, 63],
+    scoreWindow: [126, 250],
+    useRules: [true, false],
+    ruleMargin: [0.5, 1, 2],
+  };
+  const PARAM_LABELS = {
+    stopAtr: (v) => (v ? `stop-loss ${v}× ATR` : 'no stop-loss'),
+    minScore: (v) => `trust a strategy at Sharpe ≥ ${v}`,
+    reviewEvery: (v) => `review strategies every ${v} sessions`,
+    scoreWindow: (v) => `judge strategies on the last ${v === 250 ? 'year' : '6 months'}`,
+    useRules: (v) => (v ? 'use learned rules' : 'ignore learned rules'),
+    ruleMargin: (v) => `rule strictness ${v === 0.5 ? 'high' : v === 1 ? 'normal' : 'low'}`,
+    strategies: (v) => {
+      if (!v || v.length >= ALL.length) return 'use all strategies';
+      const off = ALL.filter((k) => !v.includes(k));
+      return off.length <= v.length ? `don't use ${off.map((k) => STRATEGIES[k].label).join(', ')}` : `only use ${v.map((k) => STRATEGIES[k].label).join(', ')}`;
+    },
+  };
+  const normParams = (p) => {
+    const n = { ...BRAIN_DEFAULTS, stopAtr: 3, ...p };
+    n.strategies = n.strategies && n.strategies.length < ALL.length ? ALL.filter((k) => n.strategies.includes(k)) : null;
+    return n;
+  };
+  const paramKey = (p) => JSON.stringify(normParams(p));
+  function describeParams(p, base) {
+    const n = normParams(p), b = base ? normParams(base) : null;
+    return Object.keys(PARAM_LABELS).filter((k) => !b || JSON.stringify(n[k]) !== JSON.stringify(b[k])).map((k) => PARAM_LABELS[k](n[k]));
+  }
+  function neighbours(p) {
+    const n = normParams(p), out = [];
+    for (const k in SPACE) for (const v of SPACE[k]) if (v !== n[k]) out.push({ ...n, [k]: v });
+    const on = n.strategies || ALL;
+    for (const k of ALL) {
+      const next = on.includes(k) ? on.filter((x) => x !== k) : [...on, k];
+      if (next.length >= 2) out.push({ ...n, strategies: next });
+    }
+    return out.map(normParams);
+  }
+  /** Hill-climbing search: change one setting at a time from the best so far; stop when nothing helps. */
+  function makeOptimizer(start, { maxRounds = 30, patience = 10, seed = 7 } = {}) {
+    let r = seed >>> 0;
+    const rand = () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const o = { best: normParams(start), bestScore: -Infinity, tried: new Map(), rounds: 0, stale: 0, done: false, history: [], maxRounds };
+    o.next = () => {
+      if (o.done || o.rounds >= maxRounds || o.stale >= patience) { o.done = true; return null; }
+      if (!o.tried.has(paramKey(o.best))) return o.best;
+      const cand = neighbours(o.best).filter((p) => !o.tried.has(paramKey(p)));
+      if (!cand.length) { o.done = true; o.local = true; return null; }
+      return cand[Math.floor(rand() * cand.length)];
+    };
+    o.report = (p, score, extra) => {
+      o.rounds++; o.tried.set(paramKey(p), score);
+      const better = score > o.bestScore + 1e-9;
+      if (better) { o.best = normParams(p); o.bestScore = score; o.stale = 0; } else o.stale++;
+      o.history.push({ round: o.rounds, params: normParams(p), score, better, ...(extra || {}) });
+      return better;
+    };
+    return o;
+  }
+  /** Run one training account with given settings over [start, end]; price data and indicators are reused. */
+  function evaluate(cfg, params, data, nifty, start, end, lessons) {
+    const n = normParams(params);
+    const st = newTraining({ ...cfg, stopAtr: n.stopAtr, brain: { ...n } }, start, end, lessons);
+    const ctx = begin(st, data, nifty, 0); stepDays(ctx, Infinity); finish(ctx);
+    return st;
+  }
+  /** Return % and worst drop % of a training account between two dates (no cash flows in training). */
+  function periodStats(st, from, to) {
+    const rows = st.equity.filter((r) => r[0] >= from && (!to || r[0] <= to));
+    if (rows.length < 2) return { ret: 0, dd: 0, days: rows.length, nifty: null };
+    let pk = -Infinity, dd = 0; rows.forEach((r) => { pk = Math.max(pk, r[1]); dd = Math.min(dd, r[1] / pk - 1); });
+    const nf = rows.filter((r) => r[2]);
+    return { ret: (rows[rows.length - 1][1] / rows[0][1] - 1) * 100, dd: dd * 100, days: rows.length,
+      nifty: nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null };
+  }
+  /** Apply tuned settings to the live account (new entries use the new stop-loss; open stops stay as they are). */
+  function applyParams(st, params, today, nowIso) {
+    const n = normParams(params), before = brainParams(st);
+    st.cfg.brain = { reviewEvery: n.reviewEvery, minScore: n.minScore, scoreWindow: n.scoreWindow, useRules: n.useRules, ruleMargin: n.ruleMargin, strategies: n.strategies };
+    st.cfg.stopAtr = n.stopAtr;
+    Object.values(st.tickers).forEach((T) => { [T.live, T.sim, ...Object.values(T.shadows)].forEach((t) => { t.stopAtr = n.stopAtr; }); });
+    const ch = describeParams(n, before);
+    logEvent(st, today, ch.length ? `New brain settings: ${ch.join('; ')}` : 'Brain settings unchanged', 'learn', nowIso);
+    return ch;
   }
 
   /** Why a closed losing trade went wrong, in plain words. */
@@ -569,6 +663,7 @@
 
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
+    BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, evaluate, periodStats, applyParams, paramKey, normParams,
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach,
     adjustCapital, netCapital, cashTotal };
