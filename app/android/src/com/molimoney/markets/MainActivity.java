@@ -6,7 +6,7 @@ import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
-/** Shows the bundled offline site (assets/www) full-screen. External links open in the browser. */
+/** Hosts the paper-trading app (assets/www) and exposes a small native bridge as window.Android. */
 public class MainActivity extends Activity {
     private static final String HOME = "file:///android_asset/www/index.html";
     private WebView web;
@@ -17,20 +17,13 @@ public class MainActivity extends Activity {
         web = new WebView(this);
         web.setBackgroundColor(Color.TRANSPARENT);
         WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(false);
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
         s.setAllowFileAccess(true);
-        s.setBuiltInZoomControls(true);
-        s.setDisplayZoomControls(false);
-        s.setLoadWithOverviewMode(true);
         web.setWebViewClient(new LinkClient(this));
+        web.addJavascriptInterface(new Bridge(this, web), "Android");
         setContentView(web);
-        if (state == null || web.restoreState(state) == null) web.loadUrl(HOME);
-    }
-
-    @Override
-    protected void onSaveInstanceState(Bundle out) {
-        super.onSaveInstanceState(out);
-        web.saveState(out);
+        web.loadUrl(HOME);
     }
 
     @Override

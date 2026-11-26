@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Paper Trader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="brand">Paper Trader</div>
+    <div class="status" id="status">–</div>
+  </div>
+  <button class="btn" id="updateBtn">Update</button>
+</header>
+<nav class="tabs" id="tabs">
+  <a data-tab="portfolio" class="on">Portfolio</a>
+  <a data-tab="brain">Brain</a>
+  <a data-tab="journal">Journal</a>
+  <a data-tab="settings">Settings</a>
+</nav>
+<main id="view"></main>
+<div class="toast" id="toast"></div>
+<script src="engine.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
