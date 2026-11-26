@@ -1,0 +1,10 @@
+charts/
+__pycache__/
+.kite_token.json
+.tick_sizes.json
+.env
+paper_state.json
+orders_log.csv
+checklist_log.csv
+paper.log
+KILL_SWITCH

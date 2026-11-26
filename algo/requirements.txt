@@ -1,0 +1,8 @@
+yfinance>=0.2.40
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+requests>=2.28
+# optional
+# statsmodels>=0.14   # cointegration test in pairs.py
+# kiteconnect>=5.0    # live trading in live_kite.py
