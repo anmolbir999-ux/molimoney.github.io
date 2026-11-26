@@ -64,7 +64,7 @@
   }
 
   let st = store.load();
-  let tab = 'chat';
+  let tab = 'home';
   let busy = false, cancel = false;
   let setupPicks = new Set(DEFAULTS.tickers);
   let query = '';
@@ -221,50 +221,6 @@
 
   const eqNow = () => Object.values(st.tickers).reduce((s, t) => s + E.equity(t.live, t.lastClose || 0), 0);
 
-  // ---------------------------------------------------------------- views
-  function viewHome() {
-    if (!st.lastDate) return `<div class="card"><p class="empty">Tap <b>Update</b> to download prices and start.</p><div class="chips">${marketChip()}</div></div>`;
-    const eq = eqNow(), pnl = eq + st.withdrawn - st.invested, idx = returnIndex(st.equity);
-    const ret = idx.length ? idx[idx.length - 1] - 100 : 0;
-    const nf = st.equity.filter((r) => r[2]), nRet = nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null;
-    const paused = E.isPaused(st);
-    let h = `<div class="card hero">
-      <div class="m">Paper account value</div>
-      <div class="big">${inr(eq)}</div>
-      <p class="sub"><b class="${cls(pnl)}">${inr(pnl)} (${pct(ret, 2)})</b> since ${fdate(st.paperStart)}${nRet != null ? ` · Nifty ${pct(nRet, 2)}` : ''}</p>`;
-    if (idx.length >= 2) h += pnlChart(idx);
-    else if (st.sim.length > 20) {
-      const s = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0]));
-      const sn = st.sim.filter((r) => r[2]), snr = (sn[sn.length - 1][2] / sn[0][2] - 1) * 100;
-      h += pnlChart(s) + `<p class="sub">Brain's practice run ${fdate(st.sim[0][0])} – ${fdate(st.sim[st.sim.length - 1][0])}: ${pct(s[s.length - 1] - 100)} (max drawdown ${pct(maxDD(s))}) vs Nifty ${pct(snr)}. Real paper trading started ${fdate(st.paperStart)}.</p>`;
-    }
-    h += `<div class="chips">${marketChip()}${paused ? `<span class="chip paused">${paused === 'stop' ? 'Stopped' : 'Paused'}</span>` : ''}</div></div>`;
-
-    if (paused) h += `<div class="banner">${paused === 'stop' ? 'Trading stopped: positions are sold at the next open and no new buys are made.' : 'Trading paused: no new buys. Open positions keep their stop-loss and exit signals.'}<div class="actions"><button class="btn sm" id="resume">Resume trading</button></div></div>`;
-    else h += `<div class="actions" style="margin:4px 0 0"><button class="btn ghost sm" id="pause">Pause new buys</button><button class="btn warn sm" id="stopall">Stop &amp; sell all</button></div>`;
-
-    const T = st.tickers, mk = market();
-    const pend = Object.entries(T).filter(([, t]) => t.live.pending);
-    const blk = Object.entries(T).filter(([, t]) => t.blockedToday && t.blockedToday.d === st.lastDate);
-    if (pend.length || blk.length) {
-      h += `<div class="sec">Next open · in ${cdSpan(mk.nextOpen)}</div><div class="card">`;
-      h += pend.map(([s, t]) => `<div class="row"><div><b>${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}</b><div class="m">${t.removing ? 'removing stock' : esc(E.STRATEGIES[t.active]?.label || 'exit to cash')}</div></div><div class="r m">at the open</div></div>`).join('');
-      h += blk.map(([s, t]) => `<div class="row"><div><b>Skip ${sym(s)}</b><div class="m">${esc(E.STRATEGIES[t.active]?.label || '')} said buy – blocked by a learned rule: ${t.blockedToday.rules.map((k) => esc(E.FEATURES[k].label.toLowerCase())).join(', ')}</div></div></div>`).join('');
-      h += `</div>`;
-    }
-    const pos = Object.entries(T).filter(([, t]) => t.live.qty > 0);
-    h += `<div class="sec">Positions</div><div class="card">`;
-    h += pos.length ? pos.map(([s, t]) => {
-      const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
-      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}${tr.tp ? ` · target ${px(tr.tp)}` : ''}</div></div>
-        <div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${inr((t.lastClose - tr.ep) * tr.q)}</div></div></div>`;
-    }).join('') : `<p class="empty">No open positions – all ${inr(eq)} in cash.</p>`;
-    h += `</div>`;
-    const nextReview = Math.min(...Object.values(T).map((t) => E.brainParams(st).reviewEvery - t.sinceReview));
-    h += `<p class="note">Next strategy review in ${Number.isFinite(nextReview) ? nextReview : '–'} session${nextReview === 1 ? '' : 's'}. Countdowns don't include NSE holidays. New prices arrive after 3:45 PM.</p>`;
-    return h;
-  }
-
   function stockRow(s, inAcct) {
     const t = st && st.tickers[s];
     const meta = t && t.fresh ? 'added – studies its history on the next update' : t ? `${t.active ? esc(E.STRATEGIES[t.active].label) : 'cash'}${t.live.qty ? ` · holding ${t.live.qty}` : ''}${t.removing ? ' · removing' : ''}` : inAcct && st ? 'added – downloads on next update' : '';
@@ -295,75 +251,12 @@
     return h;
   }
 
-  function viewBrain() {
-    if (!st.lastDate) return `<p class="empty">The brain starts after the first update.</p>`;
-    const R = st.learning.rules;
-    let h = `<div class="card"><p class="sub" style="margin:0">Each stock runs ${Object.keys(E.STRATEGIES).length} strategies in hidden paper accounts. Every ${E.brainParams(st).reviewEvery} sessions the brain picks whichever worked best over the last year – or cash if none did. Losing trades are tagged; conditions that keep losing become rules.</p></div>`;
-    h += `<div class="sec">Learned rules</div><div class="card">` + Object.entries(E.FEATURES).map(([k, f]) => {
-      const r = R[k] || {};
-      const ev = r.nWith ? `${r.nWith} trades with it: avg ${pct(r.meanWith)}, win ${Math.round((r.winWith || 0) * 100)}% · without: avg ${pct(r.meanWithout)}` : 'Not enough trades yet';
-      return `<div class="row"><div><b>${esc(f.label)}</b><div class="m">${ev}</div></div><div class="r"><span class="pill ${r.active ? 'on' : ''}">${r.active ? 'Avoid' : 'OK'}</span></div></div>`;
-    }).join('') + `</div>`;
-    h += `<div class="sec">Strategy per stock</div><div class="card">` + Object.entries(st.tickers).map(([s, t]) => {
-      const rows = Object.entries(t.scores || {}).filter(([, v]) => v != null && !Number.isNaN(v)).sort((a, b) => b[1] - a[1])
-        .map(([k, v]) => `<tr><td>${k === t.active ? '<b>' : ''}${esc(E.STRATEGIES[k].label)}${k === t.active ? '</b>' : ''}</td><td class="${cls(v)}">${v.toFixed(2)}</td></tr>`).join('');
-      return `<details class="row" style="display:block"><summary style="display:flex;justify-content:space-between"><b>${sym(s)}</b><span class="m">${t.active ? esc(E.STRATEGIES[t.active].label) : 'Cash'} · review in ${E.brainParams(st).reviewEvery - t.sinceReview} ›</span></summary>
-        <table><tr><td class="m">Strategy</td><td class="m">Sharpe, last year</td></tr>${rows || '<tr><td class="m">Not scored yet</td><td></td></tr>'}</table></details>`;
-    }).join('') + `</div>`;
-    const evs = st.learning.events.slice(-50).reverse();
-    h += `<div class="sec">What happened</div><div class="card">` + (evs.length ? evs.map((e) => `<div class="ev"><span class="d">${fdate(e.date)}${e.date < st.paperStart ? ' · practice' : ''}${e.at && e.kind === 'user' ? ' · ' + istStamp(Date.parse(e.at)).slice(11, 16) : ''}</span><br>${esc(e.text)}</div>`).join('') : '<p class="empty">Nothing yet.</p>') + `</div>`;
-    return h;
-  }
-
   function allLiveTrades() {
     return [...Object.entries(st.tickers).flatMap(([s, t]) => t.live.trades.map((x) => ({ ...x, sym: s }))), ...st.archive];
   }
 
-  function viewJournal() {
-    if (!st.lastDate) return `<p class="empty">No trades yet.</p>`;
-    const liveTr = allLiveTrades();
-    const simTr = Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.filter((x) => x.x).map((x) => ({ ...x, sym: s })));
-    const useSim = liveTr.filter((t) => t.x).length === 0;
-    const list = (useSim ? simTr : liveTr).sort((a, b) => (b.x || b.e).localeCompare(a.x || a.e));
-    const S = E.stats(list);
-    let h = useSim ? `<p class="sub">No closed paper trades yet – showing the brain's practice trades from before ${fdate(st.paperStart)}.</p>` : '';
-    h += `<div class="card"><div class="grid">
-      <div><div class="m">Closed trades</div><div class="stat">${S.n}</div></div>
-      <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(S.winRate) ? '–' : Math.round(S.winRate * 100) + '%'}</div></div>
-      <div style="margin-top:10px"><div class="m">Avg win / loss</div><div><b class="up">${pct(S.avgWin)}</b> / <b class="down">${pct(S.avgLoss)}</b></div></div>
-      <div style="margin-top:10px"><div class="m">Net P&amp;L</div><div><b class="${cls(S.pnl)}">${inr(S.pnl)}</b></div></div>
-      <div style="margin-top:10px"><div class="m">Avg days held</div><div><b>${Number.isNaN(S.avgDays) ? '–' : S.avgDays.toFixed(1)}</b></div></div>
-      <div style="margin-top:10px"><div class="m">Profit targets hit</div><div><b>${S.targets}</b></div></div></div></div>`;
-    const tally = {};
-    list.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
-    const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-    if (tl.length) h += `<div class="sec">Most common mistakes</div><div class="card">` + tl.slice(0, 6).map(([g, n]) => `<div class="row"><div>${esc(g)}</div><div class="r"><b>${n}</b></div></div>`).join('') + `</div>`;
-    h += `<div class="sec">Trades</div><div class="card">` + (list.length ? list.slice(0, 80).map((t) => {
-      const open = !t.x, last = st.tickers[t.sym]?.lastClose, r = open ? (last / t.ep - 1) * 100 : t.ret;
-      const tags = !open && t.pnl <= 0 ? `<ul class="tags">${E.diagnose(t).map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : '';
-      return `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:10px">
-        <div><b>${sym(t.sym)}</b> <span class="m">${esc(E.STRATEGIES[t.s]?.label || '')}</span>
-        <div class="m">${fdate(t.e)} → ${open ? 'open' : fdate(t.x) + (t.r === 'stop' ? ' (stop)' : '')} · ${t.q} @ ${px(t.ep)}</div></div>
-        <div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${open ? '' : inr(t.pnl)}</div></div></div>${tags}</div>`;
-    }).join('') : '<p class="empty">No trades yet. The brain only buys when a strategy it trusts gives a fresh signal.</p>') + `</div>`;
-    return h;
-  }
-
-  function viewSetup() {
-    const c = DEFAULTS;
-    return `<div class="card hero"><div class="big" style="font-size:26px">Start paper trading</div>
-      <p class="sub">Free Yahoo Finance prices. No money, no broker – fills are simulated at the next session's open with Indian costs (STT, stamp duty, GST, DP) and slippage. The brain practises on past data first.</p></div>
-      <div class="card"><div class="grid">
-        <div><label>Paper capital (₹)</label><input id="s_c" inputmode="numeric" value="${c.capital}"></div>
-        <div><label>Practice years</label><input id="s_w" inputmode="numeric" value="${c.warmYears}"></div>
-        <div><label>Stop-loss (× ATR, 0 = off)</label><input id="s_s" inputmode="decimal" value="${c.stopAtr}"></div>
-        <div><label>Risk per trade % (0 = full)</label><input id="s_r" inputmode="decimal" value="${c.riskPct}"></div>
-      </div><div class="actions"><button class="btn" id="s_go">Start with ${setupPicks.size} stock${setupPicks.size === 1 ? '' : 's'}</button></div></div>` + viewStocks();
-  }
-
   function viewMore() {
     let h = '';
-    if (N && N.canRemind && N.canRemind()) h += `<div class="sec">Reminder</div><div class="card"><div class="switch"><input type="checkbox" id="s_rem" ${N.reminderOn() ? 'checked' : ''}><span>Remind me at 4:15 PM on weekdays to update</span></div></div>`;
     h += `<div class="sec">Paper money</div><div class="card">
       <div class="row"><div><b>Account value</b><div class="m">${inr(E.cashTotal(st))} in cash · put in ${inr(st.invested)}${st.withdrawn ? ` · taken out ${inr(st.withdrawn)}` : ''}</div></div><div class="r"><b>${inr(eqNow())}</b></div></div>
       <label>Amount (₹ – e.g. 50000, 50k, 1.5 lakh)</label><input id="m_amt" inputmode="decimal" placeholder="1 lakh">
@@ -395,6 +288,324 @@
     return h;
   }
 
+
+  // ---------------------------------------------------------------- design pieces
+  let bid = 0;
+  /** Moli, the little advisor: happy | wave | concerned | thinking. Breathes, blinks, waves (CSS). */
+  function buddy(size, mood = 'happy') {
+    const id = 'bh' + ++bid;
+    const ang = (mood === 'thinking' ? -150 : mood === 'wave' ? -62 : 70) * Math.PI / 180;
+    const hx = (69 + Math.cos(ang) * 25).toFixed(1), hy = (72 + Math.sin(ang) * 25).toFixed(1);
+    const tilt = mood === 'thinking' ? 8 : mood === 'concerned' ? -5 : 0;
+    const ex = mood === 'thinking' ? 1.6 : 0, ey = mood === 'thinking' ? -2.2 : 0;
+    const F = '#2b2622', SK = '#f1cba8', HR = '#4a3428', PT = '#4a4740', BL = 'rgba(232,144,122,.45)';
+    const sprout = [[-90, 8.5], [-58, 6.5], [-122, 6.5]].map(([a, l]) => { const r = a * Math.PI / 180; return `<line x1="50" y1="14.5" x2="${(50 + Math.cos(r) * l).toFixed(1)}" y2="${(14.5 + Math.sin(r) * l).toFixed(1)}" style="stroke:var(--clay)" stroke-width="2.8" stroke-linecap="round"/>`; }).join('');
+    const mouth = mood === 'thinking' ? `<circle cx="53" cy="51" r="1.8" fill="${F}"/>`
+      : `<path d="M44 49.5Q50 ${mood === 'concerned' ? 43.5 : 55.5} 56 49.5" fill="none" stroke="${F}" stroke-width="2.2" stroke-linecap="round"/>`;
+    const brows = mood === 'concerned' ? `<path d="M36 33.5L43 31.5M64 33.5L57 31.5" stroke="${F}" stroke-width="1.8" stroke-linecap="round"/>` : '';
+    const dots = mood === 'thinking' ? `<circle class="tdot" cx="80" cy="22" r="2.2" style="fill:var(--clay)"/><circle class="tdot" cx="87" cy="13" r="3" style="fill:var(--clay)"/><circle class="tdot" cx="94" cy="4" r="3.8" style="fill:var(--clay)"/>` : '';
+    return `<svg class="buddy ${mood}" width="${size}" height="${Math.round(size * 1.3)}" viewBox="0 0 100 130" aria-hidden="true">
+      <defs><clipPath id="${id}"><rect x="0" y="0" width="100" height="31"/></clipPath></defs>
+      <ellipse cx="50" cy="126.5" rx="20" ry="2.5" style="fill:var(--ink)" opacity=".1"/>
+      <g class="bodyg">
+        <line x1="43" y1="100" x2="43" y2="119" stroke="${PT}" stroke-width="8" stroke-linecap="round"/>
+        <line x1="57" y1="100" x2="57" y2="119" stroke="${PT}" stroke-width="8" stroke-linecap="round"/>
+        <line x1="31" y1="72" x2="23" y2="95" style="stroke:var(--clay-d)" stroke-width="8" stroke-linecap="round"/>
+        <circle cx="23" cy="96" r="4.6" fill="${SK}"/>
+        <rect x="27" y="63" width="46" height="44" rx="17" style="fill:var(--clay)"/>
+        <path d="M43 60Q50 66 57 60" fill="none" style="stroke:var(--clay-d)" stroke-width="2.4" stroke-linecap="round"/>
+        <g transform="rotate(${tilt} 50 62)">
+          <circle cx="50" cy="38" r="24" fill="${SK}"/>
+          <circle cx="50" cy="38" r="25.5" fill="${HR}" clip-path="url(#${id})"/>
+          <circle cx="29" cy="33" r="5" fill="${HR}"/><circle cx="71" cy="33" r="5" fill="${HR}"/>
+          ${sprout}
+          <circle cx="36" cy="47" r="4.2" fill="${BL}"/><circle cx="64" cy="47" r="4.2" fill="${BL}"/>
+          <ellipse class="eye" cx="${40 + ex}" cy="${40.5 + ey}" rx="2.3" ry="3.2" fill="${F}"/>
+          <ellipse class="eye" cx="${60 + ex}" cy="${40.5 + ey}" rx="2.3" ry="3.2" fill="${F}"/>
+          ${brows}${mouth}
+        </g>
+        <g class="armr"><line x1="69" y1="72" x2="${hx}" y2="${hy}" style="stroke:var(--clay-d)" stroke-width="8" stroke-linecap="round"/><circle cx="${hx}" cy="${hy}" r="4.6" fill="${SK}"/></g>
+        ${dots}
+      </g></svg>`;
+  }
+  const GEAR = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>';
+  const BACK = '<svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>';
+  const pageHead = (title, sub, back) => `<div class="ph">${back ? `<button class="iconbtn" data-go="${back}" aria-label="Back">${BACK}</button>` : ''}<div class="t"><h1>${title}</h1>${sub ? `<div class="s">${sub}</div>` : ''}</div></div>`;
+  const greeting = () => { const h = ist().getUTCHours(); return h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
+  const moodOf = (k) => (k === 'warn' ? 'concerned' : k === 'idea' ? 'thinking' : 'happy');
+  const KIND = { warn: 'Heads up', idea: 'Idea', good: 'Nice' };
+  const holdValue = () => Object.values(st.tickers).reduce((s, t) => s + t.live.qty * (t.lastClose || 0), 0);
+  const updatedAgo = () => { const a = st.lastFetch ? Math.round((Date.now() - st.lastFetch) / 60000) : null; return a == null ? 'never' : a < 1 ? 'just now' : a < 60 ? a + ' min ago' : a < 1440 ? Math.round(a / 60) + ' h ago' : Math.round(a / 1440) + ' d ago'; };
+
+  // ---------------------------------------------------------------- suggestions (Moli's advice)
+  const SECTOR = {};
+  Object.entries(CATALOG).forEach(([g, l]) => l.forEach((s) => { SECTOR[s + '.NS'] = g; }));
+  /** Rule-based suggestions about the paper account, most important first. */
+  function advice() {
+    if (!st || !st.lastDate) return [];
+    const out = [], add = (o) => out.push(o);
+    const eq = eqNow(), cash = E.cashTotal(st), pnl = eq + st.withdrawn - st.invested, idx = returnIndex(st.equity);
+    const ret = idx.length ? idx[idx.length - 1] - 100 : 0, nf = st.equity.filter((r) => r[2]);
+    const nRet = nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null, days = st.equity.length;
+    const trades = allLiveTrades(), S = E.stats(trades), B = E.brainParams(st);
+    const costs = Object.values(st.tickers).reduce((s, t) => s + t.live.costs, 0);
+    const gap = st.lastFetch ? (Date.now() - st.lastFetch) / 36e5 : 99;
+    const mk = market();
+    if (gap > 20 && !mk.open) add({ kind: 'warn', title: 'Time to catch up', body: `Last update was ${updatedAgo()}. Update so I can trade the sessions I missed and learn from them.`, act: ['update', 'Update now'] });
+    const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending);
+    if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + `. They fill at 9:15 AM – in ${dur(mk.nextOpen - Date.now())}.`, pill: 'tomorrow' });
+    if (nRet != null && days >= 15 && ret < nRet - 3) add({ kind: 'warn', title: `The Nifty is ahead of me by ${(nRet - ret).toFixed(1)} pts`, body: `Since ${fdate(st.paperStart)} I made ${pct(ret)} while a Nifty index fund made ${pct(nRet)}. Most active strategies trail the index over time. Holding part of the money in NIFTYBEES (a Nifty ETF) keeps you close to the market.`, pill: `−${(nRet - ret).toFixed(1)} pts`, neg: true, act: st.cfg.tickers.includes('NIFTYBEES.NS') ? null : ['add:NIFTYBEES.NS', 'Add NIFTYBEES'] });
+    if (nRet != null && days >= 15 && ret > nRet + 2) add({ kind: 'good', title: `Ahead of the Nifty by ${(ret - nRet).toFixed(1)} pts`, body: `I made ${pct(ret)} vs the Nifty's ${pct(nRet)} since ${fdate(st.paperStart)}. A short streak can be luck – keep watching it over months.`, pill: `+${(ret - nRet).toFixed(1)} pts` });
+    const dd = maxDD(idx);
+    if (idx.length > 5 && dd < -8) add({ kind: 'warn', title: `Down ${Math.abs(dd).toFixed(1)}% from the peak`, body: `That's the deepest fall so far. A tighter stop-loss or quick mode limits how far a trade can run against you – or pause new buys while you look.`, pill: pct(dd), neg: true, act: E.isPaused(st) ? null : ['pause', 'Pause new buys'] });
+    if (eq > 0 && cash / eq > 0.7 && days >= 10) add({ kind: 'idea', title: `${inr(cash)} is sitting in cash`, body: `${Math.round((cash / eq) * 100)}% of the account isn't invested because no strategy I trust is signalling. That's safe, but idle. Adding a stock or ETF where a strategy is working gives the money a job.`, pill: `${Math.round((cash / eq) * 100)}% idle`, act: ['stocks', 'Browse stocks'] });
+    const dead = Object.entries(st.tickers).filter(([, t]) => !t.active && Object.values(t.scores || {}).some((v) => v != null && !Number.isNaN(v)) && Object.values(t.scores).every((v) => !(v >= B.minScore)));
+    if (dead.length) { const [s, t] = dead[0]; const best = Math.max(...Object.values(t.scores).filter((v) => !Number.isNaN(v))); add({ kind: 'idea', title: `Nothing works on ${sym(s)} lately`, body: `The best strategy on it scored ${best.toFixed(2)} over the last year – below my bar of ${B.minScore}. I keep it in cash. You could swap it for a stock that trends better.${dead.length > 1 ? ` Same for ${dead.slice(1, 4).map(([x]) => sym(x)).join(', ')}.` : ''}`, act: [`remove:${s}`, `Remove ${sym(s)}`] }); }
+    const secs = {}; st.cfg.tickers.forEach((s) => { const g = SECTOR[s] || 'Other'; secs[g] = (secs[g] || 0) + 1; });
+    const topSec = Object.entries(secs).sort((a, b) => b[1] - a[1])[0];
+    if (topSec && st.cfg.tickers.length >= 4 && topSec[1] / st.cfg.tickers.length > 0.45) add({ kind: 'idea', title: `${Math.round((topSec[1] / st.cfg.tickers.length) * 100)}% of your stocks are ${topSec[0].toLowerCase()}`, body: `When that sector falls, most of the account falls together. Mixing in IT, pharma or consumer stocks spreads the risk.`, act: ['stocks', 'Add other sectors'] });
+    const gross = trades.filter((t) => t.x).reduce((s, t) => s + (t.xp - t.ep) * t.q, 0);
+    if (S.n >= 5 && costs > Math.max(0.3 * Math.abs(gross), 0.004 * st.invested)) add({ kind: 'warn', title: `Costs took ${inr(costs)}`, body: `STT, stamp duty and fees on ${S.n} closed trades ate ${gross > 0 ? Math.round((costs / gross) * 100) + '% of the profit' : 'into the results'}. ${B.quick ? 'Quick mode trades often – fewer, bigger trades keep more.' : 'Fewer trades would keep more.'}`, pill: `−${inr(costs)}`, neg: true, act: B.quick ? ['quick-off', 'Switch to normal'] : null });
+    const losers = trades.filter((t) => t.x && t.pnl <= 0);
+    if (losers.length >= 3) {
+      const tally = {}; losers.forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
+      const [g, n] = Object.entries(tally).sort((a, b) => b[1] - a[1])[0];
+      const whip = /Whipsaw/.test(g) && !B.quick;
+      add({ kind: 'idea', title: `My most common mistake: ${g.split(':')[0].toLowerCase()}`, body: `${n} of ${losers.length} losing trades. ${whip ? 'Signals keep reversing quickly – quick mode takes profits fast and uses time limits instead.' : 'Once there is enough evidence I turn conditions like this into a rule and skip those entries.'}`, act: whip ? ['quick-on', 'Try quick mode'] : null });
+    }
+    const lastLearn = st.learning.events.filter((e) => e.kind === 'learn' && /Learned: avoid/.test(e.text)).slice(-1)[0];
+    if (lastLearn && lastLearn.date >= st.paperStart) add({ kind: 'good', title: 'I learned something', body: lastLearn.text.replace('Learned: ', 'Now I ') });
+    const lastTrain = st.trainings.slice(-1)[0];
+    if (!lastTrain || Date.now() - Date.parse(lastTrain.at) > 30 * 864e5) add({ kind: 'idea', title: 'Test my settings on the past', body: `Walk-forward training learns on one stretch of history and trades the next one blind – the most honest check of whether my settings work. Takes a few seconds.`, act: ['train-walk', 'Walk forward 5 years'] });
+    if (S.n >= 8 && S.winRate < 0.35 && S.avgWin > Math.abs(S.avgLoss) * 2) add({ kind: 'good', title: 'Few wins, but big ones', body: `Only ${Math.round(S.winRate * 100)}% of trades win, but winners average ${pct(S.avgWin)} vs losers ${pct(S.avgLoss)}. That's how trend-following works – the losses are the cost of catching big moves.` });
+    if (E.isPaused(st)) add({ kind: 'warn', title: `Trading is ${E.isPaused(st) === 'stop' ? 'stopped' : 'paused'}`, body: 'I\'m not buying anything new. Resume when you\'re ready.', act: ['resume', 'Resume'] });
+    if (!out.length) add({ kind: 'good', title: 'All quiet', body: `${accountLine().replace(/\*\*/g, '')} Nothing needs your attention right now.` });
+    const order = { warn: 0, idea: 1, good: 2 };
+    return out.sort((a, b) => order[a.kind] - order[b.kind]);
+  }
+  const advCard = (a) => `<div class="card adv"><div class="top"><span class="dot ${a.kind}"></span><span class="lbl">${KIND[a.kind]}</span>${a.pill ? `<span class="pill ${a.neg ? 'neg' : ''}">${esc(a.pill)}</span>` : ''}</div>
+    <h3>${esc(a.title)}</h3><p>${esc(a.body)}</p>${a.act ? `<div class="actions"><button class="btn sm ghost" data-act="${esc(a.act[0])}">${esc(a.act[1])}</button></div>` : ''}</div>`;
+  let tipIdx = 0;
+
+  function doAct(a) {
+    if (a === 'update') return update();
+    if (a === 'pause') { E.setPause(st, 'pause', todayIST(), nowIso()); store.save(st); toast('Paused: no new buys'); return render(); }
+    if (a === 'resume') { E.setPause(st, null, todayIST(), nowIso()); store.save(st); toast('Trading resumed'); return render(); }
+    if (a === 'stopall') { if (!confirm('Sell every position at the next open and stop buying?')) return; E.setPause(st, 'stop', todayIST(), nowIso()); store.save(st); toast('Stopped: positions sell at the next open'); return render(); }
+    if (a === 'stocks') { tab = 'stocks'; render(); return window.scrollTo(0, 0); }
+    if (a === 'chat') { tab = 'chat'; render(); return scrollEnd(); }
+    if (a === 'settings') { tab = 'settings'; render(); return window.scrollTo(0, 0); }
+    if (a === 'wrapped') return openWrapped();
+    if (a === 'quick-on' || a === 'quick-off') { setStyle(a === 'quick-on'); toast(a === 'quick-on' ? 'Quick trading on' : 'Normal trading on'); return render(); }
+    if (a === 'train' || a === 'train-walk') { if (a === 'train-walk') Object.assign(train, { phase: 'setup', mode: 'repeat', route: 'walk', preset: '5y' }); tab = 'train'; render(); return window.scrollTo(0, 0); }
+    if (a.startsWith('add:')) return addStock(a.slice(4));
+    if (a.startsWith('remove:')) return removeStock(a.slice(7));
+    if (a === 'money') { tab = 'settings'; render(); setTimeout(() => { const el = $('m_amt'); if (el) { el.scrollIntoView({ block: 'center' }); el.focus(); } }, 50); }
+  }
+
+  // ---------------------------------------------------------------- Home
+  function viewHome() {
+    const now = ist(), month = now.toLocaleDateString('en-IN', { month: 'long', timeZone: 'UTC' });
+    let h = `<div class="ph"><div class="t"><h1>${greeting()}${st.cfg.name ? ', ' + esc(st.cfg.name) : ''}</h1><div class="s">${month} at a glance · updated ${updatedAgo()} · <a data-act="update">Update</a></div></div><button class="iconbtn" data-act="settings" aria-label="Settings">${GEAR}</button></div>`;
+    if (!st.lastDate) return h + `<div class="card"><div class="says" style="margin:0">${buddy(70, 'wave')}<div class="bub"><div class="lbl">Moli says</div><h3>Let's get started</h3><p>Tap Update and I'll download prices, practise on the past, then start paper trading.</p></div></div></div>`;
+    h += `<a class="wrapban" data-act="wrapped"><span class="ic">✳</span><div><b>Today, wrapped</b><span>Your trading day in a few taps</span></div><span class="play">Play ▸</span></a>`;
+    const eq = eqNow(), pnl = eq + st.withdrawn - st.invested, idx = returnIndex(st.equity), ret = idx.length ? idx[idx.length - 1] - 100 : 0;
+    const nf = st.equity.filter((r) => r[2]), nRet = nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null;
+    h += `<div class="card hero"><div class="lbl">Paper account</div><div class="big">${inr(eq)}</div>
+      <p class="sub ${cls(pnl)}">${Math.abs(pnl) < 1 ? 'Unchanged' : `${pnl > 0 ? '+' : '−'}${inr(Math.abs(pnl)).replace('−', '')} (${pct(ret, 2)})`} since ${fdate(st.paperStart)}${nRet != null ? ` · Nifty ${pct(nRet, 2)}` : ''}</p>`;
+    if (idx.length >= 2) h += pnlChart(down(idx, 300)) + `<div class="legend"><span><i style="background:var(--clay)"></i>Your account</span><span><i style="background:var(--faint)"></i>Start</span></div>`;
+    else if (st.sim.length > 20) {
+      const s = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0])), sn = st.sim.filter((r) => r[2]);
+      h += pnlChart(down(s, 300)) + `<p class="sub">Practice run ${fdate(st.sim[0][0])} – ${fdate(st.sim[st.sim.length - 1][0])}: ${pct(s[s.length - 1] - 100)} vs Nifty ${pct((sn[sn.length - 1][2] / sn[0][2] - 1) * 100)}.</p>`;
+    }
+    h += `</div>`;
+    const cash = E.cashTotal(st), inv = holdValue();
+    h += `<div class="tiles"><div class="tile"><div class="lbl">Invested</div><div class="v">${inr(inv)}</div></div>
+      <div class="tile"><div class="lbl">Cash</div><div class="v">${inr(cash)}</div></div>
+      <div class="tile"><div class="lbl">${pnl >= 0 ? 'Profit' : 'Loss'}</div><div class="v ${cls(pnl)}">${inr(Math.abs(pnl))}</div></div></div>`;
+    const adv = advice(), a = adv[tipIdx % Math.max(adv.length, 1)];
+    if (a) h += `<div class="says">${buddy(76, moodOf(a.kind))}<div class="bub"><div class="adv"><div class="top" style="margin:0"><span class="lbl">Moli says</span>${a.pill ? `<span class="pill ${a.neg ? 'neg' : ''}">${esc(a.pill)}</span>` : ''}</div></div>
+      <h3>${esc(a.title)}</h3><p>${esc(a.body)}</p>
+      <div class="actions" style="margin-top:10px">${a.act ? `<button class="btn sm" data-act="${esc(a.act[0])}">${esc(a.act[1])}</button>` : ''}${adv.length > 1 ? `<a class="more" data-act="nexttip">Next tip (${(tipIdx % adv.length) + 1}/${adv.length}) ›</a>` : ''}</div></div></div>`;
+    const paused = E.isPaused(st), mk = market();
+    h += `<div class="card"><div class="chips" style="margin:0">${marketChip()}${paused ? `<span class="chip paused">${paused === 'stop' ? 'Stopped' : 'Paused'}</span>` : ''}</div>
+      <div class="actions">${paused ? `<button class="btn sm" data-act="resume">Resume trading</button>` : `<button class="btn sm ghost" data-act="pause">Pause new buys</button><button class="btn sm warn" data-act="stopall">Stop &amp; sell all</button>`}</div></div>`;
+    const T = st.tickers, pend = Object.entries(T).filter(([, t]) => t.live.pending), blk = Object.entries(T).filter(([, t]) => t.blockedToday && t.blockedToday.d === st.lastDate);
+    if (pend.length || blk.length) {
+      h += `<div class="card"><div class="lbl">Next open · in ${cdSpan(mk.nextOpen)}</div>`;
+      h += pend.map(([s, t]) => `<div class="row"><div><b>${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}</b><div class="m">${t.removing ? 'removing stock' : esc(E.STRATEGIES[t.active]?.label || 'exit to cash')}</div></div><div class="r m">9:15 AM</div></div>`).join('');
+      h += blk.map(([s, t]) => `<div class="row"><div><b>Skip ${sym(s)}</b><div class="m">${esc(E.STRATEGIES[t.active]?.label || '')} said buy – blocked by a learned rule: ${t.blockedToday.rules.map((k) => esc(E.FEATURES[k].label.toLowerCase())).join(', ')}</div></div></div>`).join('') + `</div>`;
+    }
+    const pos = Object.entries(T).filter(([, t]) => t.live.qty > 0);
+    h += `<div class="card"><div class="lbl">Positions</div>` + (pos.length ? pos.map(([s, t]) => {
+      const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
+      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}${tr.tp ? ` · target ${px(tr.tp)}` : ''}</div></div><div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${inr((t.lastClose - tr.ep) * tr.q)}</div></div></div>`;
+    }).join('') : `<p class="empty">No open positions – everything is in cash.</p>`) + `</div>`;
+    h += `<div class="card"><div class="lbl">Your stocks · ${st.cfg.tickers.length}</div>` + Object.entries(T).slice(0, 6).map(([s, t]) => {
+      const sp = t.spark.c, ch = sp.length > 1 ? (sp[sp.length - 1] / sp[sp.length - 2] - 1) * 100 : 0;
+      return `<div class="row"><div><b>${sym(s)}</b><div class="m">${t.fresh ? 'studying its history…' : t.active ? esc(E.STRATEGIES[t.active].label) : 'in cash'}</div></div><div class="r">${px(t.lastClose)}<div class="m ${cls(ch)}">${pct(ch, 2)}</div></div></div>`;
+    }).join('') + `<div class="actions" style="margin-top:8px"><button class="btn sm ghost" data-act="stocks">Manage stocks</button><button class="btn sm ghost" data-act="money">Change money</button></div></div>`;
+    return h;
+  }
+
+  // ---------------------------------------------------------------- Activity
+  function viewActivity() {
+    let h = pageHead('Activity', 'Every paper trade, newest first');
+    if (!st.lastDate) return h + `<p class="empty">No trades yet.</p>`;
+    const liveTr = allLiveTrades(), simTr = Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.filter((x) => x.x).map((x) => ({ ...x, sym: s })));
+    const useSim = liveTr.filter((t) => t.x).length === 0 && liveTr.length === 0;
+    const list = useSim ? simTr : liveTr, S = E.stats(list);
+    if (useSim) h += `<div class="card"><p class="sub" style="margin:0">No paper trades yet – showing my practice trades from before ${fdate(st.paperStart)}.</p></div>`;
+    h += `<div class="card"><div class="grid">
+      <div><div class="lbl">Closed trades</div><div class="stat">${S.n}</div></div>
+      <div><div class="lbl">Win rate</div><div class="stat">${Number.isNaN(S.winRate) ? '–' : Math.round(S.winRate * 100) + '%'}</div></div>
+      <div><div class="lbl">Avg win / loss</div><div><b class="up">${pct(S.avgWin)}</b> / <b class="down">${pct(S.avgLoss)}</b></div></div>
+      <div><div class="lbl">Net P&amp;L</div><div><b class="${cls(S.pnl)}">${inr(S.pnl)}</b></div></div>
+      <div><div class="lbl">Avg days held</div><div><b>${Number.isNaN(S.avgDays) ? '–' : S.avgDays.toFixed(1)}</b></div></div>
+      <div><div class="lbl">Targets hit</div><div><b>${S.targets}</b></div></div></div></div>`;
+    const tally = {};
+    list.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
+    const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+    if (tl.length) h += `<div class="card"><div class="lbl">Most common mistakes</div>` + tl.slice(0, 5).map(([g, n]) => `<div class="row"><div>${esc(g)}</div><div class="r"><b>${n}×</b></div></div>`).join('') + `</div>`;
+    const ev = [];
+    list.forEach((t) => { ev.push({ d: t.e, k: 'buy', t }); if (t.x) ev.push({ d: t.x, k: 'sell', t }); });
+    ev.sort((a, b) => b.d.localeCompare(a.d) || (a.k === 'sell' ? -1 : 1));
+    let lastM = '';
+    const rows = ev.slice(0, 160).map(({ d, k, t }) => {
+      const m = new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      const head = m !== lastM ? `${lastM ? '</div>' : ''}<div class="daylbl">${m}</div><div class="card" style="padding:4px 16px">` : ''; lastM = m;
+      const open = !t.x, last = st.tickers[t.sym]?.lastClose;
+      const ini = sym(t.sym).replace(/[^A-Z]/g, '').slice(0, 3);
+      if (k === 'buy') {
+        const r = open && last ? (last / t.ep - 1) * 100 : null;
+        return head + `<div class="tx"><span class="badge open">${ini}</span><div class="mid"><b>Bought ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${t.q} @ ${px(t.ep)} · ${esc(E.STRATEGIES[t.s]?.label || '')}</div></div><div class="r">${open ? `<b class="${cls(r)}">${pct(r)}</b><div class="m">holding</div>` : `<span class="m">${inr(t.ep * t.q)}</span>`}</div></div>`;
+      }
+      const tags = t.pnl <= 0 ? `<div class="m" style="margin-top:3px">${esc(E.diagnose(t)[0])}</div>` : '';
+      const why = t.r === 'stop' ? 'stop-loss' : t.r === 'target' ? 'profit target' : t.r === 'time' ? 'time limit' : 'signal';
+      return head + `<div class="tx"><span class="badge ${t.pnl > 0 ? 'win' : ''}">${ini}</span><div class="mid"><b>Sold ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${why} · held ${t.bars || 0}d</div>${tags}</div><div class="r"><b class="${cls(t.pnl)}">${t.pnl > 0 ? '+' : ''}${inr(t.pnl)}</b><div class="m">${pct(t.ret)}</div></div></div>`;
+    }).join('');
+    h += rows ? rows + '</div>' : `<div class="card"><p class="empty">No trades yet. I only buy when a strategy I trust gives a fresh signal.</p></div>`;
+    return h;
+  }
+
+  // ---------------------------------------------------------------- Guide
+  function viewGuide() {
+    const adv = advice(), S = E.stats(allLiveTrades());
+    let h = `<div class="ph withbuddy">${buddy(64, adv[0] ? moodOf(adv[0].kind) : 'happy')}<div class="t"><h1>Your guide</h1><div class="s">Based on ${S.n} closed trade${S.n === 1 ? '' : 's'} and ${st.equity.length} session${st.equity.length === 1 ? '' : 's'} of paper trading</div></div></div>`;
+    if (!st.lastDate) return h + `<p class="empty">The guide starts after the first update.</p>`;
+    const idx = returnIndex(st.equity), ret = idx.length ? idx[idx.length - 1] - 100 : 0, nf = st.equity.filter((r) => r[2]);
+    const nRet = nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null;
+    if (nRet != null) h += `<div class="card"><div class="lbl">Me vs the Nifty</div><div class="big ${cls(ret - nRet)}">${ret - nRet >= 0 ? '+' : '−'}${Math.abs(ret - nRet).toFixed(1)}<span class="m" style="font-family:var(--sans);font-size:17px"> pts</span></div><p class="sub">I made ${pct(ret, 2)} since ${fdate(st.paperStart)}; the Nifty made ${pct(nRet, 2)}.</p></div>`;
+    const eq = eqNow(), cash = E.cashTotal(st), inv = holdValue(), pnl = eq + st.withdrawn - st.invested, tot = Math.max(inv + cash, 1);
+    h += `<div class="card"><div class="lbl">Your money</div><div class="split"><span style="flex:${Math.max(inv, tot * 0.02)};background:var(--slate)"></span><span style="flex:${Math.max(cash, tot * 0.02)};background:var(--ochre)"></span></div>
+      <div class="kv"><span class="dot" style="background:var(--slate)"></span><span class="k">In shares</span><span class="v1">${inr(inv)}</span><span class="v2">${Math.round((inv / tot) * 100)}%</span></div>
+      <div class="kv"><span class="dot" style="background:var(--ochre)"></span><span class="k">Cash</span><span class="v1">${inr(cash)}</span><span class="v2">${Math.round((cash / tot) * 100)}%</span></div>
+      <div class="kv"><span class="dot" style="background:var(--${pnl >= 0 ? 'sage' : 'clay'})"></span><span class="k">${pnl >= 0 ? 'Profit' : 'Loss'} so far</span><span class="v1">${inr(Math.abs(pnl))}</span><span class="v2 ${cls(pnl)}">${pct(ret)}</span></div>
+      <p class="m" style="margin:8px 0 0">${E.brainParams(st).quick ? 'Quick trading – in and out within days.' : 'Normal trading – riding trends.'}</p></div>`;
+    h += `<div class="sec">Suggestions</div>` + adv.map(advCard).join('');
+    const R = st.learning.rules;
+    h += `<div class="sec">What I've learned</div><div class="card">` + Object.entries(E.FEATURES).map(([k, f]) => {
+      const r = R[k] || {};
+      const evd = r.nWith ? `${r.nWith} trades with it: avg ${pct(r.meanWith)}, win ${Math.round((r.winWith || 0) * 100)}% · without: avg ${pct(r.meanWithout)}` : 'Not enough trades yet';
+      return `<div class="row"><div><b>${esc(f.label)}</b><div class="m">${evd}</div></div><div class="r"><span class="pill ${r.active ? 'neg' : ''}">${r.active ? 'Avoid' : 'OK'}</span></div></div>`;
+    }).join('') + `</div>`;
+    h += `<div class="sec">Strategy per stock</div><div class="card">` + Object.entries(st.tickers).map(([s, t]) => {
+      const rows = Object.entries(t.scores || {}).filter(([, v]) => v != null && !Number.isNaN(v)).sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `<tr><td>${k === t.active ? '<b>' : ''}${esc(E.STRATEGIES[k].label)}${k === t.active ? '</b>' : ''}</td><td class="${cls(v)}">${v.toFixed(2)}</td></tr>`).join('');
+      return `<details class="row" style="display:block"><summary style="display:flex;justify-content:space-between"><b>${sym(s)}</b><span class="m">${t.active ? esc(E.STRATEGIES[t.active].label) : 'Cash'} · review in ${E.brainParams(st).reviewEvery - t.sinceReview} ›</span></summary>
+        <table><tr><td class="m">Strategy</td><td class="m">Sharpe, last year</td></tr>${rows || '<tr><td class="m">Not scored yet</td><td></td></tr>'}</table></details>`;
+    }).join('') + `</div>`;
+    const evs = st.learning.events.slice(-12).reverse();
+    h += `<div class="sec">What happened</div><div class="card">` + (evs.length ? evs.map((e) => `<div class="ev"><span class="d">${fdate(e.date)}${e.date < st.paperStart ? ' · practice' : ''}</span><br>${esc(e.text)}</div>`).join('') : '<p class="empty">Nothing yet.</p>') + `</div>`;
+    return h;
+  }
+
+  // ---------------------------------------------------------------- Welcome / setup
+  function viewSetup() {
+    const c = DEFAULTS;
+    return `<div class="welcome">${buddy(96, 'wave')}<div class="ph" style="margin-top:10px"><div class="t"><h1>Hi, I'm Moli</h1><div class="s">I paper trade Indian stocks with pretend money, learn from my mistakes, and tell you what I'd do. Free Yahoo Finance prices; no broker, no real money.</div></div></div></div>
+      <div class="card"><div class="lbl">Your name (optional)</div><input id="s_name" placeholder="e.g. Anmol" autocomplete="off">
+        <div class="grid" style="margin-top:4px">
+        <div><label>Paper money (₹)</label><input id="s_c" inputmode="numeric" value="${c.capital}"></div>
+        <div><label>Practice years</label><input id="s_w" inputmode="numeric" value="${c.warmYears}"></div>
+        <div><label>Stop-loss (× ATR)</label><input id="s_s" inputmode="decimal" value="${c.stopAtr}"></div>
+        <div><label>Risk per trade %</label><input id="s_r" inputmode="decimal" value="${c.riskPct}"></div></div>
+        <div class="actions"><button class="btn block" id="s_go">Start with ${setupPicks.size} stock${setupPicks.size === 1 ? '' : 's'}</button></div></div>` + viewStocks();
+  }
+
+  // ---------------------------------------------------------------- Settings
+  function viewSettings() {
+    let h = pageHead('Settings', '', 'home');
+    h += `<div class="card"><div class="lbl">Name</div><input id="set_name" value="${esc(st.cfg.name || '')}" placeholder="Your name" autocomplete="off"></div>`;
+    h += `<a class="card" style="display:flex;align-items:center;gap:12px" data-act="stocks"><div style="flex:1"><div class="lbl">Stocks</div><div class="serif" style="font-size:20px;margin-top:4px">${st.cfg.tickers.length} in your list</div><div class="m">${st.cfg.tickers.slice(0, 6).map(sym).join(', ')}${st.cfg.tickers.length > 6 ? '…' : ''}</div></div><span class="m" style="font-size:22px">›</span></a>`;
+    if (N && N.canRemind && N.canRemind()) h += `<div class="card"><div class="setrow"><div class="tx"><h3>Daily reminder</h3><div class="m">A nudge at 4:15 PM on weekdays to update and see what I did.</div></div><input type="checkbox" class="tog" id="s_rem" ${N.reminderOn() ? 'checked' : ''}></div></div>`;
+    return h + viewMore();
+  }
+
+  // ---------------------------------------------------------------- Ask Moli (chat)
+  function viewChat() {
+    const msgs = st.chat || [];
+    let h = pageHead('Ask Moli', 'Questions or orders, in plain words', 'home');
+    if (!msgs.length) h += `<div class="says">${buddy(70, 'wave')}<div class="bub"><div class="lbl">Moli says</div><h3>What would you like to know?</h3><p>Try "how am I doing?", "why SBIN?", "quick mode" or "train last 5 years until max profit".</p></div></div>`;
+    h += msgs.map((m) => {
+      const extra = m.x === 'pnl' && st.equity.length > 1 ? pnlChart(down(returnIndex(st.equity), 300))
+        : m.x === 'sim' && st.sim.length > 1 ? pnlChart(down(returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0])), 300)) : '';
+      return m.r === 'you' ? `<div class="msg you"><div><div class="b">${esc(m.t)}</div><div class="t">${timeOf(m.at)}</div></div></div>`
+        : `<div class="msg moli">${buddy(34, 'happy')}<div class="bub"><div class="b">${md(m.t)}</div>${extra}<div class="t">${timeOf(m.at)}</div></div></div>`;
+    }).join('');
+    if (busy) h += `<div class="msg moli typingmsg">${buddy(34, 'thinking')}<div class="bub"><div class="typing"><span></span><span></span><span></span></div></div></div>`;
+    return h;
+  }
+
+  // ---------------------------------------------------------------- Today, wrapped (story)
+  let wslides = [], wi = 0;
+  function openWrapped() {
+    const d = st.lastDate, nfr = st.equity.length >= 2 ? st.equity.slice(-2) : null;
+    const niftyToday = st.equity.length >= 2 && nfr[0][2] && nfr[1][2] ? (nfr[1][2] / nfr[0][2] - 1) * 100 : null;
+    const eq = eqNow(), dayPnl = nfr ? nfr[1][1] - nfr[0][1] - ((nfr[1][3] || 0) - (nfr[0][3] || 0)) : 0;
+    const today = allLiveTrades().flatMap((t) => [...(t.e === d ? [`Bought ${t.q} ${sym(t.sym)} at ${px(t.ep)}`] : []), ...(t.x === d ? [`Sold ${sym(t.sym)} – ${t.pnl >= 0 ? 'made' : 'lost'} ${inr(Math.abs(t.pnl))}`] : [])]);
+    const learnt = st.learning.events.filter((e) => e.date === d && (e.kind === 'learn' || e.kind === 'switch' || e.kind === 'unlearn')).map((e) => e.text);
+    const adv = advice()[0];
+    const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending).map(([s, t]) => `${t.live.pending === 'BUY' ? 'buy' : 'sell'} ${sym(s)}`);
+    const dayName = new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long' });
+    wslides = [
+      { bg: 'clay', head: dayName, html: `<div class="small">The Nifty ${niftyToday == null ? 'closed at' : niftyToday >= 0 ? 'rose' : 'fell'}</div><div class="huge">${niftyToday == null ? (nfr ? Math.round(nfr[1][2]).toLocaleString('en-IN') : '–') : pct(Math.abs(niftyToday), 2).replace('+', '')}</div><div class="after">${niftyToday == null ? '' : `to ${Math.round(nfr[1][2]).toLocaleString('en-IN')}`}</div>` },
+      { bg: '', head: dayName, html: `<div class="small">Your paper account</div><div class="huge">${inr(eq)}</div><div class="after ${cls(dayPnl)}">${nfr ? `${dayPnl >= 0 ? '+' : '−'}${inr(Math.abs(dayPnl)).replace('−', '')} today` : 'Paper trading started today'}</div>` },
+      { bg: 'ink', head: dayName, html: `<div class="small">Trades today</div><div class="huge">${today.length}</div>${today.length ? `<ul>${today.slice(0, 6).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : `<div class="after">No trades – no strategy I trust gave a fresh signal.</div>`}` },
+      { bg: 'sage', head: dayName, html: `<div class="small">What I learned</div>${learnt.length ? `<ul>${learnt.slice(0, 4).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : `<div class="huge" style="font-size:44px">Steady</div><div class="after">No new lessons or strategy switches today.</div>`}` },
+      { bg: '', head: dayName, note: true, html: `<h2>Moli's note for tomorrow</h2><div class="wnote">${buddy(84, adv ? moodOf(adv.kind) : 'happy')}<div class="bub">${pend.length ? `At 9:15 I'll ${pend.join(', ')}. ` : ''}${adv ? esc(adv.title) + '. ' + esc(adv.body) : 'Nothing needs your attention.'}</div></div><div class="actions" style="margin-top:28px"><button class="btn block" id="w_done">Done</button></div>` },
+    ];
+    wi = 0; drawWrapped(); $('wrapped').hidden = false;
+  }
+  function drawWrapped() {
+    const s = wslides[wi], w = $('wrapped');
+    w.className = 'wrapped ' + (s.bg || '');
+    w.innerHTML = `<div class="wsegs">${wslides.map((_, i) => `<i class="${i <= wi ? 'done' : ''}"></i>`).join('')}</div>
+      <div class="whead"><span>Moli Wrapped · ${esc(s.head)}</span><button id="w_x" aria-label="Close">×</button></div>
+      <div class="wbody" id="w_body">${s.html}</div>${s.note ? '' : '<div class="wtap">Tap to continue</div>'}`;
+    $('w_x').onclick = (e) => { e.stopPropagation(); w.hidden = true; };
+    const done = $('w_done'); if (done) done.onclick = () => { w.hidden = true; };
+    w.onclick = (e) => { if (s.note || e.target.closest('button')) return; if (wi < wslides.length - 1) { wi++; drawWrapped(); } };
+  }
+
+  // ---------------------------------------------------------------- + sheet
+  function openSheet() {
+    const paused = E.isPaused(st), q = E.brainParams(st).quick;
+    const items = [
+      ['chat', '💬', 'Ask Moli', 'Questions or orders in plain words'],
+      ['update', '↻', 'Update prices', `Last update ${updatedAgo()}`],
+      ['stocks', '+', 'Add a stock', 'NIFTY 50, ETFs or any NSE symbol'],
+      ['money', '₹', 'Add or withdraw money', `Account ${inr(eqNow())}`],
+      ['train', '⟲', 'Train on the past', 'Practise on real history, then apply what works'],
+      [q ? 'quick-off' : 'quick-on', q ? '〰' : '⚡', q ? 'Switch to normal trading' : 'Switch to quick trading', q ? 'Ride trends for weeks' : 'In and out within days'],
+      [paused ? 'resume' : 'pause', paused ? '▶' : '❚❚', paused ? 'Resume trading' : 'Pause new buys', paused ? 'Start buying again' : 'Keep positions, stop buying'],
+      ['wrapped', '✳', 'Today, wrapped', 'Your trading day in a few taps'],
+    ];
+    $('sheet').innerHTML = `<div class="grab"></div><h2>What next?</h2>` + items.map(([a, ic, t, s]) => `<button class="act" data-sa="${a}"><span class="ic">${ic}</span><span><b>${t}</b><span>${s}</span></span></button>`).join('');
+    $('sheet').querySelectorAll('[data-sa]').forEach((b) => { b.onclick = () => { closeSheet(); doAct(b.dataset.sa); }; });
+    $('sheet').classList.add('open'); $('sheetScrim').classList.add('open');
+  }
+  function closeSheet() { $('sheet').classList.remove('open'); $('sheetScrim').classList.remove('open'); }
 
   // ---------------------------------------------------------------- training on the past
   const MIN_TRAIN = '2008-01-01';
@@ -851,7 +1062,6 @@
   }
 
   // ---------------------------------------------------------------- conversation
-  const TITLES = { chat: 'Today', home: 'Portfolio', stocks: 'Stocks', train: 'Train on the past', brain: 'Brain', journal: 'Journal', more: 'Data & settings' };
   function md(t) { // tiny markdown: **bold**, "- " bullets, blank-line paragraphs
     return esc(t).split(/\n{2,}/).map((block) => {
       const lines = block.split('\n');
@@ -958,12 +1168,12 @@
       if (/auto(matically)?\s*apply|apply automatically/.test(l)) train.autoApply = true;
       const [a, b] = trainRange();
       say(train.mode === 'repeat' && train.route === 'walk'
-        ? `Starting walk-forward training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: I'll learn on the first 40%, then trade three stretches I haven't seen, learning more after each. Open **Train on the past** in the menu to watch.`
+        ? `Starting walk-forward training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: I'll learn on the first 40%, then trade three stretches I haven't seen, learning more after each. Open the **Train** tab to watch.`
         : train.mode === 'repeat' && train.route === 'evolve'
         ? `Starting evolution training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: ${Math.max(2, Math.round(train.rounds / 8))} generations of 8 very different brain settings; the fittest survive and mix. I'll tune on the first 70% and test the winner on the last 30%.`
         : train.mode === 'repeat'
-        ? `Starting repeat training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: up to ${train.rounds} rounds, changing one setting at a time and keeping whatever makes more profit. I'll tune on the first 70% and test the winner on the last 30%. Open **Train on the past** in the menu to watch.`
-        : `Starting a training run on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())} and ${train.brain === 'fresh' ? 'a fresh brain' : 'only lessons from before ' + fdate(a)}. I'll tell you how it went – or open **Train on the past** in the menu to watch.`);
+        ? `Starting repeat training on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())}: up to ${train.rounds} rounds, changing one setting at a time and keeping whatever makes more profit. I'll tune on the first 70% and test the winner on the last 30%. Open the **Train** tab to watch.`
+        : `Starting a training run on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())} and ${train.brain === 'fresh' ? 'a fresh brain' : 'only lessons from before ' + fdate(a)}. I'll tell you how it went – or open the **Train** tab to watch.`);
       return startTraining();
     }
     if (/\b(resume|unpause|start trading|continue)\b/.test(l)) { if (!E.isPaused(st)) return say('I\'m not paused – trading as normal.'); E.setPause(st, null, todayIST(), nowIso()); store.save(st); return say('Resumed. I\'ll buy again when a strategy I trust gives a signal.'); }
@@ -1035,11 +1245,12 @@
     if (/\bwhy\b|\?$/.test(l) || symIn()) {
       const s0 = symIn(), s = s0 && normSym(s0), T = s && st.tickers[s];
       if (T) {
-        const sc = Object.entries(T.scores || {}).filter(([, v]) => v != null && !Number.isNaN(v)).sort((a, b) => b[1] - a[1]).slice(0, 3);
+        const ok = E.allowedStrategies(E.brainParams(st));
+        const sc = Object.entries(T.scores || {}).filter(([k, v]) => ok.includes(k) && v != null && !Number.isNaN(v)).sort((a, b) => b[1] - a[1]).slice(0, 3);
         const lastT = T.live.trades.slice(-1)[0];
-        return say(`**${sym(s)}** at ${px(T.lastClose)}. ${T.active ? `I'm using **${E.STRATEGIES[T.active].label}** because it had the best record over the last year (Sharpe ${T.scores[T.active].toFixed(2)}).` : 'No strategy has worked well enough on it lately, so I keep it in cash.'}` +
+        return say(`**${sym(s)}** at ${px(T.lastClose)}. ${T.active ? `I'm using **${E.STRATEGIES[T.active].label}** because it had the best record over the last year (Sharpe ${T.scores[T.active].toFixed(2)}).` : !sc.length ? 'I just changed trading style, so I\'ll pick the best strategy for it at the next update.' : 'No strategy has worked well enough on it lately, so I keep it in cash.'}` +
           (sc.length ? `\n\nBest strategies on it lately:\n${sc.map(([k, v]) => `- ${E.STRATEGIES[k].label}: ${v.toFixed(2)}`).join('\n')}` : '') +
-          `\n\n${T.live.qty ? `I hold ${T.live.qty} shares bought at ${px(lastT.ep)} (${pct((T.lastClose / lastT.ep - 1) * 100)}).` : 'I don\'t hold it.'} Next review in ${E.brainParams(st).reviewEvery - T.sinceReview} sessions.`);
+          `\n\n${T.live.qty ? `I hold ${T.live.qty} shares bought at ${px(lastT.ep)} (${pct((T.lastClose / lastT.ep - 1) * 100)}).` : 'I don\'t hold it.'} ${!sc.length ? '' : `Next review in ${Math.max(1, E.brainParams(st).reviewEvery - T.sinceReview)} sessions.`}`);
       }
     }
     if (/\b(how|doing|going|status|perform|profit|p&l|pnl|summary|money)\b/.test(l)) {
@@ -1049,7 +1260,7 @@
     return say(`I didn't catch that. ${STRAT_HELP}`);
   }
 
-  function suggestions() {
+  function chipList() {
     const s = [];
     if ((train.phase === 'done' && train.summary && !train.summary.taught) || (train.phase === 'repeatDone' && train.rep.good && !train.rep.sum.taught)) s.push('Apply');
     if (E.isPaused(st)) s.push('Resume');
@@ -1057,21 +1268,8 @@
     return s.slice(0, 8);
   }
 
-  function viewChat() {
-    const msgs = st.chat || [];
-    let h = msgs.length ? '' : `<div class="welcome"><div class="big">Good to see you.</div><p class="sub">Ask how I'm doing, or tell me what to do.</p></div>`;
-    h += msgs.map((m) => {
-      const extra = m.x === 'pnl' && st.equity.length > 1 ? pnlChart(down(returnIndex(st.equity), 300))
-        : m.x === 'sim' && st.sim.length > 1 ? pnlChart(down(returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0])), 300)) : '';
-      return m.r === 'you' ? `<div class="msg you"><div><div class="b">${esc(m.t)}</div><div class="t">${timeOf(m.at)}</div></div></div>`
-        : `<div class="msg moli"><div class="who"><span class="mark">m</span>Moli · ${timeOf(m.at)}</div><div class="b">${md(m.t)}</div>${extra}</div>`;
-    }).join('');
-    if (busy) h += `<div class="msg moli"><div class="who"><span class="mark">m</span>Moli</div><div class="typing"><span></span><span></span><span></span></div></div>`;
-    return h;
-  }
-
   function bindChat() {
-    $('sugg').innerHTML = suggestions().map((x) => `<button type="button">${esc(x)}</button>`).join('');
+    $('sugg').innerHTML = chipList().map((x) => `<button type="button">${esc(x)}</button>`).join('');
     $('sugg').querySelectorAll('button').forEach((b) => { b.onclick = () => send(b.textContent); });
   }
   async function send(text) {
@@ -1169,8 +1367,9 @@
       const cfg = { tickers: [...setupPicks], capital: num('s_c', 500000) || 500000, warmYears: Math.min(Math.round(num('s_w', 2)), 8),
         stopAtr: num('s_s', 3), riskPct: num('s_r', 0), slippage: 0.05 };
       st = E.newState(cfg, todayIST()); st.chat = [];
+      const nm = ($('s_name') || {}).value; if (nm && nm.trim()) st.cfg.name = nm.trim().slice(0, 30);
       say(`Hi – I'm Moli. I'll paper trade your ${cfg.tickers.length} stocks with ${inr(cfg.capital)} of pretend money and learn from my mistakes.\n\nFirst I'm practising on the last ${cfg.warmYears} years so I don't start from zero. This takes a few seconds.`);
-      store.save(st); tab = 'chat'; query = ''; render(); update();
+      store.save(st); tab = 'home'; query = ''; render(); update();
     });
     on('s_del', () => { if (confirm('Delete the paper account and everything the brain learned? Download a backup first if you want to keep it.')) { st = null; store.clear(); setupPicks = new Set(DEFAULTS.tickers); render(); } });
     const money = (mode) => () => {
@@ -1183,33 +1382,35 @@
     document.querySelectorAll('[data-md]').forEach((b) => { b.onclick = () => { setStyle(true, { maxDays: +b.dataset.md }); render(); }; });
     on('b_reset', () => { const ch = E.applyParams(st, { ...E.BRAIN_DEFAULTS, stopAtr: 3 }, todayIST(), nowIso()); store.save(st); toast(ch.length ? 'Brain settings reset' : 'Already on defaults'); render(); });
     on('m_add', money('add')); on('m_wd', money('withdraw')); on('m_set', money('set'));
+    document.querySelectorAll('[data-act]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); const a = b.dataset.act; if (a === 'nexttip') { tipIdx++; return render(); } doAct(a); }; });
+    document.querySelectorAll('[data-go]').forEach((b) => { b.onclick = () => { tab = b.dataset.go; render(); window.scrollTo(0, 0); }; });
+    const nmi = $('set_name'); if (nmi) nmi.onchange = () => { st.cfg.name = nmi.value.trim().slice(0, 30); store.save(st); toast('Saved'); };
     const rem = $('s_rem');
     if (rem) rem.onchange = () => { N.setReminder(rem.checked); toast(rem.checked ? 'Reminder on' : 'Reminder off'); };
   }
   function bindPick() { document.querySelectorAll('#pick [data-add]').forEach((b) => { b.onclick = () => addStock(b.dataset.add); }); }
 
+  const NAV = { home: 'home', activity: 'activity', train: 'train', guide: 'guide', stocks: 'home', settings: 'home', chat: '' };
   function render() {
-    document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
-    $('menuBtn').style.visibility = st ? '' : 'hidden';
-    $('updateBtn').style.display = st ? '' : 'none';
-    $('title').textContent = st ? TITLES[tab] : 'Moli';
+    document.querySelectorAll('#tabs a').forEach((a) => a.classList.toggle('on', a.dataset.tab === NAV[tab]));
+    $('tabs').style.display = st ? '' : 'none';
+    $('fab').style.display = st ? '' : 'none';
     document.body.classList.toggle('chat', !!st && tab === 'chat');
-    const page = !st ? viewSetup() : { chat: viewChat, home: viewHome, stocks: viewStocks, train: viewTrain, brain: viewBrain, journal: viewJournal, more: viewMore }[tab]();
+    const pages = { home: viewHome, activity: viewActivity, train: viewTrain, guide: viewGuide, stocks: () => pageHead('Stocks', `${st.cfg.tickers.length} in your list`, 'home') + viewStocks(), settings: viewSettings, chat: viewChat };
+    const page = !st ? viewSetup() : (pages[tab] || viewHome)();
     const note = `<p class="note">Paper trading only – simulated, not investment advice. SEBI found 87.7% of individual F&amp;O traders lost money in FY26.</p>`;
     $('view').innerHTML = page + (tab === 'chat' && st ? '' : note);
     bind(); if (tab === 'train') bindTrain(); if (st && tab === 'chat') bindChat(); setStatus();
   }
 
-  const drawer = (open) => { $('drawer').classList.toggle('open', open); $('scrim').classList.toggle('open', open); $('drawer').setAttribute('aria-hidden', String(!open)); };
-  $('menuBtn').onclick = () => drawer(true);
-  $('scrim').onclick = () => drawer(false);
-  document.querySelectorAll('#tabs a').forEach((a) => { a.onclick = () => { tab = a.dataset.tab; drawer(false); render(); if (tab === 'chat') scrollEnd(); else window.scrollTo(0, 0); }; });
+  document.querySelectorAll('#tabs a').forEach((a) => { a.onclick = () => { tab = a.dataset.tab; render(); window.scrollTo(0, 0); }; });
+  $('fab').onclick = openSheet;
+  $('sheetScrim').onclick = closeSheet;
   $('updateBtn').onclick = update;
   $('composer').onsubmit = (e) => { e.preventDefault(); send($('msg').value); };
   $('msg').addEventListener('input', autosize);
   $('msg').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('msg').value); } });
   render();
-  if (st && tab === 'chat') scrollEnd();
   if (st && (!st.lastFetch || Date.now() - st.lastFetch > 3600e3)) update();
   setInterval(tickCountdowns, 1000);
   setInterval(setStatus, 60000);

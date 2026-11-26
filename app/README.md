@@ -1,13 +1,19 @@
-# Moli – a paper trader you talk to (Android)
+# Moli Trader – paper trading that learns (Android)
 
 Runs the trading algorithm on your phone: paper trades Nifty stocks with live prices and learns from its mistakes. No real money, no broker.
 
-**Install:** download [`PaperTrader.apk`](PaperTrader.apk) (installs as "Moli") on the phone → open it → allow "install unknown apps".
+**Install:** download [`PaperTrader.apk`](PaperTrader.apk) (installs as "Moli Trader") on the phone → open it → allow "install unknown apps".
 
 ## How it looks and feels
-The main screen is a conversation. After every update Moli writes a short briefing (trades, what it learned, account vs Nifty, orders for the next open). You type questions or orders in plain words – *how am I doing?*, *positions*, *why SBIN?*, *what have you learned?*, *mistakes*, *pause*, *resume*, *stop and sell all*, *add AXISBANK*, *remove ITC*, *add 1 lakh*, *withdraw 50,000*, *quick mode*, *take profit at 2 ATR*, *time limit 5 days*, *train on the 2008 crisis* / *train 2015 to 2018* / *train last 5 years with lessons*, *teach*, *when does the market open?*, *download trades*. Everything else (portfolio, stocks, training replay, brain, journal, data & settings) is in the side menu.
+Same design as the Moli finance guide (branch `claude/android-finance-app-ik79e5`): warm cream cards with hairline borders, serif headings, small-caps labels, clay / sage / ochre accents, and **Moli** – the little animated advisor who blinks, waves, thinks and frowns depending on the advice.
 
-Design: warm off-white (warm dark in dark mode, following the phone), serif type for Moli's voice, a single terracotta accent, hairline dividers instead of cards.
+- **Home:** greeting, *Today, wrapped* banner, paper-account card with a profit/loss chart, Invested / Cash / Profit tiles, a *Moli says* tip (tap *Next tip*), market clock with pause/stop, positions, your stocks.
+- **Activity:** every buy and sell by month, with why it was sold and what went wrong on losers.
+- **Train:** train on the past – watch one run or repeat until best (step by step, evolution, walk forward).
+- **Guide:** me vs the Nifty, where your money is, **Suggestions** (heads up / idea / nice – e.g. lagging the Nifty, idle cash, a stock nothing works on, sector concentration, costs eating profits, most common mistake, drawdown, time to re-test settings), each with a one-tap action; then what the brain learned and its strategy per stock.
+- **Today, wrapped:** a story recap of the trading day ending with *Moli's note for tomorrow*.
+- **+ button:** ask Moli (chat), update, add a stock, change money, train, switch quick/normal, pause.
+- **Settings (⚙):** name, stocks, reminder, paper money, trading style, brain settings, data downloads.
 
 ## How it works
 - **Data:** free daily prices from Yahoo Finance (`query1.finance.yahoo.com`), fetched when you open the app or tap Update. Missed days are caught up one session at a time.
