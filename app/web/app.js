@@ -400,6 +400,8 @@
   const trainUrl = (s, p1, p2) => `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(s)}?period1=${p1}&period2=${p2}&interval=1d&events=div%2Csplit`;
   const down = (v, n) => (v.length <= n ? v : Array.from({ length: n }, (_, i) => v[Math.round((i * (v.length - 1)) / (n - 1))]));
 
+  const trainCapital = () => Math.round(train.capital || Math.max(E.netCapital(st), 10000));
+
   function trainRange() {
     let [a, b] = PRESETS[train.preset][1]();
     if (a < MIN_TRAIN) a = MIN_TRAIN;
@@ -431,12 +433,13 @@
       const tickers = st.cfg.tickers.filter((t) => data[t]);
       if (!tickers.length) throw new Error('No stock has data for that period');
       const lessons = train.brain === 'lessons' ? E.lessonsBefore(st, start) : [];
-      const tst = E.newTraining({ ...st.cfg, tickers, capital: st.slice * tickers.length }, start, end, lessons);
+      const capital = trainCapital();
+      const tst = E.newTraining({ ...st.cfg, tickers, capital }, start, end, lessons);
       progress(syms.length, syms.length, 'Warming up');
       await new Promise((ok) => setTimeout(ok, 30));
       const ctx = E.begin(tst, data, nifty, Date.now());
       E.skipTo(ctx, start);
-      Object.assign(train, { phase: 'running', tst, ctx, playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx) });
+      Object.assign(train, { phase: 'running', tst, ctx, playing: true, acc: 0, missing, lessons: lessons.length, total: E.daysLeft(ctx), runCapital: capital });
       train.timer = setInterval(trainTick, 100);
     } catch (e) {
       toast(e.message === 'stopped' ? 'Training cancelled' : 'Could not load history – ' + e.message);
@@ -462,7 +465,7 @@
     const nf = eq.filter((r) => r[2]), trades = Object.entries(tst.tickers).flatMap(([s, t]) => t.live.trades.map((x) => ({ ...x, sym: s })));
     const S = E.stats(trades);
     const sum = { id: Date.now().toString(36), at: nowIso(), label: train.label, start: eq[0]?.[0] || train.start, end: eq[eq.length - 1]?.[0] || train.end,
-      brain: train.brain, stocks: Object.keys(tst.tickers).length, ret: idx.length ? idx[idx.length - 1] - 100 : 0,
+      brain: train.brain, stocks: Object.keys(tst.tickers).length, capital: train.runCapital, ret: idx.length ? idx[idx.length - 1] - 100 : 0,
       nret: nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null, dd: maxDD(idx), trades: S.n, win: S.winRate,
       pnl: S.pnl, taught: false, curve: down(idx, 120).map((x) => Math.round(x * 10) / 10) };
     st.trainings.push(sum); if (st.trainings.length > 30) st.trainings.shift();
@@ -493,7 +496,7 @@
       const ret = idx.length ? idx[idx.length - 1] - 100 : 0, done = train.total - E.daysLeft(train.ctx);
       let h = `<div class="card hero"><div class="m">${ph === 'done' ? 'Training finished' : 'Trading the past'} · ${esc(train.label)}</div>
         <div class="big" style="font-size:28px">${last ? fdate(last[0]) : fdate(train.start)}</div>
-        <p class="sub"><b class="${cls(ret)}">${pct(ret, 1)}</b> · ${inr(last ? last[1] : 0)}${nret != null ? ` · Nifty ${pct(nret)}` : ''}${idx.length > 1 ? ` · max drawdown ${pct(maxDD(idx))}` : ''}</p>
+        <p class="sub"><b class="${cls(ret)}">${pct(ret, 1)}</b> · ${inr(last ? last[1] : train.runCapital)} from ${inr(train.runCapital)}${nret != null ? ` · Nifty ${pct(nret)}` : ''}${idx.length > 1 ? ` · max drawdown ${pct(maxDD(idx))}` : ''}</p>
         ${pnlChart(down(idx, 400))}
         <div class="progress" style="padding:10px 0 0"><div class="bar" style="width:${Math.round((done / Math.max(train.total, 1)) * 100)}%"></div></div>
         <div class="m" style="margin-top:6px">${done}/${train.total} sessions${ph === 'running' && train.playing ? ` · about ${Math.ceil((train.total - done) / (train.speed * 2))}s left` : ''}</div>`;
@@ -543,10 +546,13 @@
     h += `<div class="sec">Brain</div><div class="card">
       <label class="switch" style="margin:0"><input type="radio" name="tb" value="fresh" ${train.brain === 'fresh' ? 'checked' : ''}><span><b>Fresh brain</b> – learns only from this period</span></label>
       <label class="switch" style="margin:12px 0 0"><input type="radio" name="tb" value="lessons" ${train.brain === 'lessons' ? 'checked' : ''}><span><b>With earlier lessons</b> – ${nl} trades that ended before ${fdate(a)} (an honest test: no future knowledge)</span></label></div>`;
+    h += `<div class="sec">Paper money for this run</div><div class="card">
+      <input id="t_cap" inputmode="decimal" value="${inr(trainCapital()).replace('₹', '')}" placeholder="e.g. 5 lakh">
+      <p class="m" style="margin:8px 0 0">Split equally across your ${st.cfg.tickers.length} stocks (${inr(trainCapital() / st.cfg.tickers.length)} each). Doesn't touch your real paper account.</p></div>`;
     h += `<div class="sec">Replay speed</div><div class="card"><div class="chips" style="margin:0">${SPEEDS.map((x) => `<button class="chip ${x === train.speed ? 'on' : ''}" data-speed="${x}">${x}× · ${x * 2} days/s</button>`).join('')}</div></div>
       <div class="actions"><button class="btn" id="t_go">Start training</button></div>`;
     if (st.trainings.length) {
-      h += `<div class="sec">Past training runs</div><div class="card">` + st.trainings.slice().reverse().map((x) => `<div class="row"><div><b>${esc(x.label)}</b><div class="m">${fdate(x.start)} – ${fdate(x.end)} · ${x.trades} trades · ${x.brain === 'fresh' ? 'fresh' : 'with lessons'}${x.taught ? ' · taught' : ''}</div></div>
+      h += `<div class="sec">Past training runs</div><div class="card">` + st.trainings.slice().reverse().map((x) => `<div class="row"><div><b>${esc(x.label)}</b><div class="m">${fdate(x.start)} – ${fdate(x.end)}${x.capital ? ` · ${inr(x.capital)}` : ''} · ${x.trades} trades · ${x.brain === 'fresh' ? 'fresh' : 'with lessons'}${x.taught ? ' · taught' : ''}</div></div>
         <div class="r"><b class="${cls(x.ret)}">${pct(x.ret)}</b><div class="m">Nifty ${pct(x.nret)}</div></div></div>`).join('') + `</div>`;
     }
     h += `<p class="note">Training reuses past data, so good results here can be luck or overfitting – the live paper account is the real test.</p>`;
@@ -558,6 +564,8 @@
     document.querySelectorAll('[data-preset]').forEach((b) => { b.onclick = () => { train.preset = b.dataset.preset; render(); }; });
     document.querySelectorAll('[data-speed]').forEach((b) => { b.onclick = () => { train.speed = +b.dataset.speed; render(); }; });
     document.querySelectorAll('input[name=tb]').forEach((r) => { r.onchange = () => { train.brain = r.value; render(); }; });
+    const cap = $('t_cap');
+    if (cap) cap.onchange = () => { const a = parseAmount(cap.value); if (a && a >= 10000) train.capital = a; else toast('Enter at least ₹10,000'); render(); };
     const f = $('t_from'), t = $('t_to');
     if (f) f.onchange = () => { train.from = f.value; render(); };
     if (t) t.onchange = () => { train.to = t.value; render(); };
@@ -651,13 +659,13 @@
     train.trades.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
     const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 3);
     const P = train.preview, ch = [...P.newRules.map((k) => `start avoiding ${E.FEATURES[k].label.toLowerCase()}`), ...P.dropped.map((k) => `stop avoiding ${E.FEATURES[k].label.toLowerCase()}`)];
-    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}) is done. I made **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
+    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}) is done. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
       (top.length ? `\n\nMy most common mistakes:\n${top.map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : '') +
       `\n\n${ch.length ? `If you say **teach**, I'll add these ${P.added} trades to my evidence and ${ch.join(', ')}.` : `If you say **teach**, I'll add these ${P.added} trades to my evidence. None of my rules would change.`} Remember: a good result on the past can be luck.`;
   }
 
   // what Moli understands
-  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons"), **teach**, say when the **market opens**, and **download trades** (or equity, brain log, history, backup).';
+  const STRAT_HELP = 'I can: **update**, tell you **how I\'m doing**, show **positions**, explain **why RELIANCE**, list **what I learned** or my **mistakes**, **pause**, **resume**, **stop and sell all**, **add AXISBANK**, **remove ITC**, change paper money (**add 1 lakh**, **withdraw 50,000**, **set money to 10 lakh**), **train on the 2008 crisis** (or "train 2015 to 2018", "train last 5 years", "with lessons", "with 10 lakh"), **teach**, say when the **market opens**, and **download trades** (or equity, brain log, history, backup).';
   async function respond(text) {
     const q = text.trim(), l = q.toLowerCase();
     const known = new Set([...Object.values(CATALOG).flat(), ...st.cfg.tickers.map(sym)]);
@@ -674,9 +682,12 @@
       else { const m = l.match(/(\d+)\s*(y|yr|year)/); train.preset = m ? ({ 1: '1y', 3: '3y', 5: '5y', 10: '10y' }[m[1]] || 'custom') : '5y';
         if (train.preset === 'custom' && m) { train.from = yearsAgo(+m[1]); train.to = todayIST(); } }
       train.brain = /lesson|experience|what you know/.test(l) ? 'lessons' : 'fresh';
+      const mm = l.match(/(?:₹|rs\.?\s*|with\s+|using\s+)(\d[\d,.]*\s*(?:k|lakhs?|lacs?|crores?|cr)?)\b|(\d[\d,.]*\s*(?:k|lakhs?|lacs?|crores?|cr))\b/);
+      const ta = mm && parseAmount(mm[1] || mm[2]);
+      if (ta && !/^(19|20)\d\d$/.test((mm[1] || mm[2]).trim())) { if (ta < 10000) return say('Use at least ₹10,000 for a training run.'); train.capital = ta; }
       train.speed = 64; train.phase = 'setup';
       const [a, b] = trainRange();
-      say(`Starting a training run on ${fdate(a)} – ${fdate(b)} with ${train.brain === 'fresh' ? 'a fresh brain' : 'only lessons from before ' + fdate(a)}. I'll tell you how it went – or open **Train on the past** in the menu to watch.`);
+      say(`Starting a training run on ${fdate(a)} – ${fdate(b)} with ${inr(trainCapital())} and ${train.brain === 'fresh' ? 'a fresh brain' : 'only lessons from before ' + fdate(a)}. I'll tell you how it went – or open **Train on the past** in the menu to watch.`);
       return startTraining();
     }
     if (/\b(resume|unpause|start trading|continue)\b/.test(l)) { if (!E.isPaused(st)) return say('I\'m not paused – trading as normal.'); E.setPause(st, null, todayIST(), nowIso()); store.save(st); return say('Resumed. I\'ll buy again when a strategy I trust gives a signal.'); }
@@ -797,8 +808,8 @@
       rows = [['training', 'stock', 'strategy', 'status', 'entry_date', 'entry_price', 'qty', 'stop', 'exit_date', 'exit_price', 'exit_reason', 'pnl_inr', 'return_pct', 'entry_conditions', 'lessons', 'exported_at'],
         ...train.trades.map((t) => [train.summary.label, sym(t.sym), E.STRATEGIES[t.s]?.label || '', t.x ? 'closed' : 'open', t.e, r2(t.ep), t.q, r2(t.stop), t.x || '', r2(t.xp), t.r || '', r2(t.pnl), r2(t.ret), feats(t.f), t.x && t.pnl <= 0 ? E.diagnose(t).join('; ') : '', exported])];
     } else if (kind === 'trainings') {
-      rows = [['ran_at_ist', 'label', 'from', 'to', 'brain', 'stocks', 'return_pct', 'nifty_return_pct', 'max_drawdown_pct', 'trades', 'win_rate_pct', 'pnl_inr', 'taught_live_brain'],
-        ...st.trainings.map((x) => [istStamp(Date.parse(x.at)), x.label, x.start, x.end, x.brain, x.stocks, r2(x.ret), r2(x.nret), r2(x.dd), x.trades, r2((x.win || 0) * 100), r2(x.pnl), x.taught ? 'yes' : 'no'])];
+      rows = [['ran_at_ist', 'label', 'from', 'to', 'brain', 'stocks', 'capital_inr', 'return_pct', 'nifty_return_pct', 'max_drawdown_pct', 'trades', 'win_rate_pct', 'pnl_inr', 'taught_live_brain'],
+        ...st.trainings.map((x) => [istStamp(Date.parse(x.at)), x.label, x.start, x.end, x.brain, x.stocks, x.capital || '', r2(x.ret), r2(x.nret), r2(x.dd), x.trades, r2((x.win || 0) * 100), r2(x.pnl), x.taught ? 'yes' : 'no'])];
     } else if (kind === 'equity') {
       const idx = returnIndex(st.equity), sidx = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0]));
       rows = [['phase', 'date', 'account_value_inr', 'net_capital_inr', 'return_index', 'nifty_close', 'exported_at'],
