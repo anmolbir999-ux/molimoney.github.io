@@ -3,33 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-<meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f4ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1e1d1a" media="(prefers-color-scheme: dark)">
 <title>Moli</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
-  <button class="icon" id="menuBtn" aria-label="Menu"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
-  <div class="title" id="title">Moli</div>
-  <button class="link" id="updateBtn">Update</button>
-</header>
-<div class="progress" id="progress" hidden><div class="track"><div class="bar" id="bar"></div></div><div class="eta" id="eta"></div></div>
-<aside class="drawer" id="drawer" aria-hidden="true">
-  <div class="dhead"><span class="mark">m</span><span class="dname">Moli</span></div>
-  <nav id="tabs">
-    <a data-tab="chat">Today</a>
-    <a data-tab="home">Portfolio</a>
-    <a data-tab="stocks">Stocks</a>
-    <a data-tab="train">Train on the past</a>
-    <a data-tab="brain">Brain</a>
-    <a data-tab="journal">Journal</a>
-    <a data-tab="more">Data &amp; settings</a>
-  </nav>
-  <div class="dfoot" id="dfoot"></div>
-</aside>
-<div class="scrim" id="scrim"></div>
+<div class="progress" id="progress" hidden>
+  <div class="track"><div class="bar" id="bar"></div></div>
+  <div class="prow"><span class="eta" id="eta"></span><button class="stopbtn" id="updateBtn">Stop</button></div>
+  <div class="eta" id="dfoot"></div>
+</div>
 <main id="view"></main>
+<button class="fab" id="fab" aria-label="Actions"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+<nav class="bottom" id="tabs">
+  <a data-tab="home"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></a>
+  <a data-tab="activity"><svg viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg><span>Activity</span></a>
+  <a data-tab="train"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></svg><span>Train</span></a>
+  <a data-tab="guide"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg><span>Guide</span></a>
+</nav>
 <form class="composer" id="composer" autocomplete="off">
   <div class="sugg" id="sugg"></div>
   <div class="box">
@@ -37,6 +29,9 @@
     <button class="send" id="sendBtn" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
   </div>
 </form>
+<div class="sheet-scrim" id="sheetScrim"></div>
+<div class="sheet" id="sheet"></div>
+<div class="wrapped" id="wrapped" hidden></div>
 <div class="toast" id="toast"></div>
 <script src="engine.js"></script>
 <script src="app.js"></script>
