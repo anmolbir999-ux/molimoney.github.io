@@ -16,8 +16,10 @@
   const REVIEW_EVERY = 21, MIN_HISTORY = 120, HYST = 0.2, EQ_KEEP = 260;
   const RULE_MIN_N = 12, RULE_WINDOW = 400, RF = 6;
   // Brain settings: defaults, overridable per account (st.cfg.brain) – tuned by repeat-training mode.
-  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null, quick: false, tpAtr: 0, maxDays: 0 };
-  const QUICK_PRESET = { quick: true, stopAtr: 2, tpAtr: 2, maxDays: 10, minScore: 0.3, reviewEvery: 21 };
+  const BRAIN_DEFAULTS = { reviewEvery: 21, minScore: 0.3, scoreWindow: 250, useRules: true, ruleMargin: 1.0, strategies: null, quick: false, tpAtr: 0, maxDays: 0, quickEdge: 0.1 };
+  // Quick defaults chosen because they held up in BOTH 2008–11 and 2023–26 (not the best in either):
+  // no fixed target – each strategy's own exit takes the profit – a 3× ATR stop and a 10-session limit.
+  const QUICK_PRESET = { quick: true, stopAtr: 3, tpAtr: 0, maxDays: 10, minScore: 0.3, reviewEvery: 21, quickEdge: 0.3 };
   const NORMAL_PRESET = { quick: false, stopAtr: 3, tpAtr: 0, maxDays: 0 };
   const brainParams = (st) => ({ ...BRAIN_DEFAULTS, stopAtr: st.cfg.stopAtr, ...(st.cfg.brain || {}) });
   const allowedStrategies = (B) => (B.strategies ? B.strategies.filter((k) => !!STRATEGIES[k].quick === !!B.quick) : null) || (B.quick ? QUICK : NORMAL);
@@ -357,8 +359,23 @@
     if (st.learning.events.length > 300) st.learning.events.shift();
   }
 
+  /** Quick mode: judge each quick strategy by its average net profit per trade over its last 20 trades. */
+  function reviewQuick(st, sym, T, date, B, allowed) {
+    const scores = {};
+    for (const k of allowed) { const tr = T.shadows[k].trades.filter((x) => x.x).slice(-20); scores[k] = tr.length >= 5 ? tr.reduce((s, x) => s + x.ret, 0) / tr.length : NaN; }
+    T.scores = scores;
+    const set = allowed.filter((k) => scores[k] > B.quickEdge).sort((a, b) => scores[b] - scores[a]);
+    const before = (T.quickSet || []).join(), cur = set[0] || null;
+    T.quickSet = set;
+    if (set.join() !== before) {
+      logEvent(st, date, set.length ? `${sym.replace('.NS', '')}: quick trades with ${set.map((k) => `${STRATEGIES[k].label} (avg ${scores[k] >= 0 ? '+' : ''}${scores[k].toFixed(2)}%/trade)`).join(', ')}`
+        : `${sym.replace('.NS', '')}: no quick strategy is making money lately – staying in cash`, 'switch');
+    }
+    T.active = cur;
+  }
   function review(st, sym, T, date) {
     const B = brainParams(st), scores = {}, allowed = allowedStrategies(B);
+    if (B.quick) return reviewQuick(st, sym, T, date, B, allowed);
     for (const k in T.shadows) if (allowed.includes(k)) scores[k] = sharpe(T.shadows[k].eq, B.scoreWindow);
     T.scores = scores;
     let best = null, bestS = -Infinity;
@@ -377,7 +394,8 @@
 
   function updateRules(st, date) {
     // evidence = trades the brain lived through recently + anything it was taught in training mode
-    const L = st.learning, recent = (L.trained || []).concat(L.closed.slice(-RULE_WINDOW)), M = brainParams(st).ruleMargin;
+    const B0 = brainParams(st), pool0 = allowedStrategies(B0);
+    const L = st.learning, recent = (L.trained || []).concat(L.closed.slice(-RULE_WINDOW)).filter((t) => pool0.includes(t.s)), M = B0.ruleMargin;
     for (const k in FEATURES) {
       const w = recent.filter((t) => t.f && t.f[k]), wo = recent.filter((t) => t.f && !t.f[k]);
       const mean = (a) => (a.length ? a.reduce((s, t) => s + t.ret, 0) / a.length : NaN);
@@ -471,12 +489,15 @@
         }
         if (++T.sinceReview >= B.reviewEvery) { T.sinceReview = 0; review(st, sym, T, d); }
         const pm = d >= st.paperStart ? pauseOn(st, d) : null;
-        const tgt = T.removing || pm === 'stop' ? 0 : T.active ? tg[T.active] : 0;
+        // quick mode: any quick strategy that has been making money on this stock may trigger an entry
+        const qfire = B.quick && T.quickSet && T.quickSet.length ? T.quickSet.find((k) => tg[k] === 1) : null;
+        const tgt = T.removing || pm === 'stop' ? 0 : B.quick ? (qfire ? 1 : 0) : T.active ? tg[T.active] : 0;
+        const why = qfire || T.active;
         const blk = blocked(st, feat), allow = blk.length === 0 && !pm && !T.removing;
-        if (d >= st.warmStart && d < st.paperStart) onBar(T.sim, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, T.active);
+        if (d >= st.warmStart && d < st.paperStart) onBar(T.sim, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, why);
         if (d >= st.paperStart) {
           const had = T.live.pending;
-          onBar(T.live, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, T.active);
+          onBar(T.live, d, R.o[i], R.h[i], R.l[i], R.c[i], tgt, a, allow, feat, why);
           if (blk.length && !pm && tgt === 1 && T.live.qty === 0 && T.live.armed && !had)
             T.blockedToday = { d, rules: blk };
         }
@@ -634,6 +655,7 @@
     quick: [false, true],
     tpAtr: [0, 1, 1.5, 2, 3],
     maxDays: [0, 5, 10, 20],
+    quickEdge: [0, 0.1, 0.3, 0.6],
   };
   const PARAM_LABELS = {
     stopAtr: (v) => (v ? `stop-loss ${v}× ATR` : 'no stop-loss'),
@@ -645,6 +667,7 @@
     quick: (v) => (v ? 'quick trading (short swings)' : 'normal trading (ride trends)'),
     tpAtr: (v) => (v ? `take profit at +${v}× ATR` : 'no profit target'),
     maxDays: (v) => (v ? `sell after ${v} sessions at most` : 'no time limit'),
+    quickEdge: (v) => `quick: use strategies averaging > +${v}% a trade`,
     strategies: (v) => {
       if (!v) return 'use all strategies of that style';
       const pool = STRATEGIES[v[0]].quick ? QUICK : NORMAL;
@@ -771,11 +794,11 @@
   function applyParams(st, params, today, nowIso) {
     const n = normParams(params), before = brainParams(st);
     st.cfg.brain = { reviewEvery: n.reviewEvery, minScore: n.minScore, scoreWindow: n.scoreWindow, useRules: n.useRules, ruleMargin: n.ruleMargin, strategies: n.strategies,
-      quick: n.quick, tpAtr: n.tpAtr, maxDays: n.maxDays };
+      quick: n.quick, tpAtr: n.tpAtr, maxDays: n.maxDays, quickEdge: n.quickEdge };
     st.cfg.stopAtr = n.stopAtr;
     Object.values(st.tickers).forEach((T) => { [T.live, T.sim, ...Object.values(T.shadows)].forEach((t) => { t.stopAtr = n.stopAtr; t.tpAtr = n.tpAtr; t.maxDays = n.maxDays; }); });
     // switching style: the brain must pick a strategy of the new style at the next review
-    if (before.quick !== n.quick) Object.values(st.tickers).forEach((T) => { T.active = null; T.sinceReview = n.reviewEvery; });
+    if (before.quick !== n.quick) Object.values(st.tickers).forEach((T) => { T.active = null; T.quickSet = []; T.sinceReview = n.reviewEvery; });
     const ch = describeParams(n, before);
     logEvent(st, today, ch.length ? `New brain settings: ${ch.join('; ')}` : 'Brain settings unchanged', 'learn', nowIso);
     return ch;

@@ -418,7 +418,7 @@
     const nf = st.equity.filter((r) => r[2]), nRet = nf.length > 1 ? (nf[nf.length - 1][2] / nf[0][2] - 1) * 100 : null;
     h += `<div class="card hero"><div class="lbl">Paper account</div><div class="big">${inr(eq)}</div>
       <p class="sub ${cls(pnl)}">${Math.abs(pnl) < 1 ? 'Unchanged' : `${pnl > 0 ? '+' : '−'}${inr(Math.abs(pnl)).replace('−', '')} (${pct(ret, 2)})`} since ${fdate(st.paperStart)}${nRet != null ? ` · Nifty ${pct(nRet, 2)}` : ''}</p>`;
-    if (idx.length >= 2) h += pnlChart(down(idx, 300)) + `<div class="legend"><span><i style="background:var(--clay)"></i>Your account</span><span><i style="background:var(--faint)"></i>Start</span></div>`;
+    if (idx.length >= 2) h += pnlChart(down(idx, 300)) + `<div class="legend"><span><i style="background:var(--sage)"></i>Profit</span><span><i style="background:var(--clay)"></i>Loss</span><a data-go="activity" style="margin-left:auto;color:var(--clay)">All charts ›</a></div>`;
     else if (st.sim.length > 20) {
       const s = returnIndex(st.sim.map((r) => [r[0], r[1], r[2], 0])), sn = st.sim.filter((r) => r[2]);
       h += pnlChart(down(s, 300)) + `<p class="sub">Practice run ${fdate(st.sim[0][0])} – ${fdate(st.sim[st.sim.length - 1][0])}: ${pct(s[s.length - 1] - 100)} vs Nifty ${pct((sn[sn.length - 1][2] / sn[0][2] - 1) * 100)}.</p>`;
@@ -469,10 +469,11 @@
       <div><div class="lbl">Net P&amp;L</div><div><b class="${cls(S.pnl)}">${inr(S.pnl)}</b></div></div>
       <div><div class="lbl">Avg days held</div><div><b>${Number.isNaN(S.avgDays) ? '–' : S.avgDays.toFixed(1)}</b></div></div>
       <div><div class="lbl">Targets hit</div><div><b>${S.targets}</b></div></div></div></div>`;
+    h += paperCharts();
     const tally = {};
     list.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
     const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-    if (tl.length) h += `<div class="card"><div class="lbl">Most common mistakes</div>` + tl.slice(0, 5).map(([g, n]) => `<div class="row"><div>${esc(g)}</div><div class="r"><b>${n}×</b></div></div>`).join('') + `</div>`;
+    if (tl.length) h += `<div class="sec">Mistakes</div><div class="card"><div class="lbl">Most common mistakes</div>` + tl.slice(0, 5).map(([g, n]) => `<div class="row"><div>${esc(g)}</div><div class="r"><b>${n}×</b></div></div>`).join('') + `</div>`;
     const ev = [];
     list.forEach((t) => { ev.push({ d: t.e, k: 'buy', t }); if (t.x) ev.push({ d: t.x, k: 'sell', t }); });
     ev.sort((a, b) => b.d.localeCompare(a.d) || (a.k === 'sell' ? -1 : 1));
@@ -518,9 +519,9 @@
     }).join('') + `</div>`;
     h += `<div class="sec">Strategy per stock</div><div class="card">` + Object.entries(st.tickers).map(([s, t]) => {
       const rows = Object.entries(t.scores || {}).filter(([, v]) => v != null && !Number.isNaN(v)).sort((a, b) => b[1] - a[1])
-        .map(([k, v]) => `<tr><td>${k === t.active ? '<b>' : ''}${esc(E.STRATEGIES[k].label)}${k === t.active ? '</b>' : ''}</td><td class="${cls(v)}">${v.toFixed(2)}</td></tr>`).join('');
-      return `<details class="row" style="display:block"><summary style="display:flex;justify-content:space-between"><b>${sym(s)}</b><span class="m">${t.active ? esc(E.STRATEGIES[t.active].label) : 'Cash'} · review in ${E.brainParams(st).reviewEvery - t.sinceReview} ›</span></summary>
-        <table><tr><td class="m">Strategy</td><td class="m">Sharpe, last year</td></tr>${rows || '<tr><td class="m">Not scored yet</td><td></td></tr>'}</table></details>`;
+        .map(([k, v]) => `<tr><td>${(t.quickSet || [t.active]).includes(k) ? '<b>' : ''}${esc(E.STRATEGIES[k].label)}${(t.quickSet || [t.active]).includes(k) ? '</b>' : ''}</td><td class="${cls(v)}">${E.brainParams(st).quick ? pct(v, 2) : v.toFixed(2)}</td></tr>`).join('');
+      return `<details class="row" style="display:block"><summary style="display:flex;justify-content:space-between"><b>${sym(s)}</b><span class="m">${E.brainParams(st).quick && t.quickSet && t.quickSet.length > 1 ? `${t.quickSet.length} quick strategies` : t.active ? esc(E.STRATEGIES[t.active].label) : 'Cash'} · review in ${E.brainParams(st).reviewEvery - t.sinceReview} ›</span></summary>
+        <table><tr><td class="m">Strategy</td><td class="m">${E.brainParams(st).quick ? 'Avg per trade, last 20' : 'Sharpe, last year'}</td></tr>${rows || '<tr><td class="m">Not scored yet</td><td></td></tr>'}</table></details>`;
     }).join('') + `</div>`;
     const evs = st.learning.events.slice(-12).reverse();
     h += `<div class="sec">What happened</div><div class="card">` + (evs.length ? evs.map((e) => `<div class="ev"><span class="d">${fdate(e.date)}${e.date < st.paperStart ? ' · practice' : ''}</span><br>${esc(e.text)}</div>`).join('') : '<p class="empty">Nothing yet.</p>') + `</div>`;
@@ -614,6 +615,72 @@
     $('sheet').classList.add('open'); $('sheetScrim').classList.add('open');
   }
   function closeSheet() { $('sheet').classList.remove('open'); $('sheetScrim').classList.remove('open'); }
+
+  // ---------------------------------------------------------------- more charts
+  /** Several lines on one scale. series: [{ v:[…], color, name, dash, w }]; shade: index after which the area is shaded (unseen data). */
+  function multiLine(series, { height = 170, shade = null, vlines = [], base = 100, shadeLabel = '' } = {}) {
+    const W = 340, H = height, P = 6, n = Math.max(...series.map((s) => s.v.length));
+    if (n < 2) return '';
+    const all = series.flatMap((s) => s.v.filter((x) => x != null && Number.isFinite(x)));
+    const lo = Math.min(base, ...all), hi = Math.max(base, ...all);
+    const X = (i) => P + (i / (n - 1)) * (W - 2 * P), Y = (y) => P + (1 - (y - lo) / (hi - lo || 1)) * (H - 2 * P);
+    let g = `<line x1="0" x2="${W}" y1="${Y(base).toFixed(1)}" y2="${Y(base).toFixed(1)}" stroke="${css('--line')}" stroke-dasharray="3 3"/>`;
+    if (shade != null && shade < n - 1) g += `<rect x="${X(shade).toFixed(1)}" y="0" width="${(W - X(shade)).toFixed(1)}" height="${H}" fill="${css('--ochre')}" opacity=".09"/>${shadeLabel ? `<text x="${(X(shade) + 4).toFixed(1)}" y="12" font-size="9" fill="${css('--muted')}">${shadeLabel}</text>` : ''}`;
+    vlines.forEach((i) => { g += `<line x1="${X(i).toFixed(1)}" x2="${X(i).toFixed(1)}" y1="0" y2="${H}" stroke="${css('--line')}"/>`; });
+    series.forEach((s) => {
+      let d = ''; s.v.forEach((y, i) => { if (y != null && Number.isFinite(y)) d += `${d ? 'L' : 'M'}${X(i).toFixed(1)},${Y(y).toFixed(1)}`; });
+      g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.w || 1.8}" ${s.dash ? 'stroke-dasharray="4 3"' : ''} stroke-linejoin="round"/>`;
+    });
+    return `<svg class="chart" style="height:${height}px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>
+      <div class="legend" style="flex-wrap:wrap;gap:6px 14px">${series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}</div>`;
+  }
+  /** Drop from the running peak, as a red area. */
+  function ddChart(v, height = 90) {
+    if (v.length < 2) return '';
+    let pk = -Infinity; const dd = v.map((x) => { pk = Math.max(pk, x); return (x / pk - 1) * 100; });
+    const W = 340, H = height, P = 4, lo = Math.min(-1, ...dd), n = dd.length;
+    const X = (i) => P + (i / (n - 1)) * (W - 2 * P), Y = (y) => P + (y / lo) * (H - 2 * P);
+    const line = dd.map((y, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(y).toFixed(1)}`).join('');
+    return `<svg class="chart" style="height:${height}px;margin-top:8px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><path d="${line}L${X(n - 1).toFixed(1)},${P}L${X(0).toFixed(1)},${P}Z" fill="${css('--clay')}" opacity=".22"/><path d="${line}" fill="none" stroke="${css('--clay')}" stroke-width="1.4"/></svg>
+      <div class="m">Worst drop ${pct(Math.min(...dd))} · now ${pct(dd[n - 1])} from the peak</div>`;
+  }
+  /** Bars around zero (green up, clay down). items: [{ v, label }] */
+  function barChart(items, { height = 130, unit = '' } = {}) {
+    if (!items.length) return '<p class="empty">Nothing to show yet.</p>';
+    const W = 340, H = height, P = 6, n = items.length, mx = Math.max(...items.map((x) => Math.abs(x.v)), 1e-9);
+    const zero = H / 2, bw = Math.max(2, ((W - 2 * P) / n) * 0.7), X = (i) => P + ((i + 0.5) * (W - 2 * P)) / n;
+    let g = `<line x1="0" x2="${W}" y1="${zero}" y2="${zero}" stroke="${css('--line')}"/>`;
+    items.forEach((x, i) => { const h = (Math.abs(x.v) / mx) * (H / 2 - P); g += `<rect x="${(X(i) - bw / 2).toFixed(1)}" y="${(x.v >= 0 ? zero - h : zero).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" rx="1.5" fill="${x.v >= 0 ? css('--sage') : css('--clay')}"/>`; });
+    const lab = n <= 12 ? items.map((x, i) => `<text x="${X(i).toFixed(1)}" y="${H - 1}" font-size="8" text-anchor="middle" fill="${css('--muted')}">${esc(x.label)}</text>`).join('') : '';
+    return `<svg class="chart" style="height:${height}px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}${lab}</svg>`;
+  }
+  /** Account vs Nifty (both start at 100) from equity rows [date, value, nifty, capital]. */
+  function vsNifty(rows, extra = {}) {
+    const idx = returnIndex(rows), n0 = (rows.find((r) => r[2]) || [])[2];
+    return multiLine([{ v: down(idx, 300), color: css('--clay'), name: 'Paper account' }, { v: down(rows.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)), 300), color: css('--slate'), name: 'Nifty 50', dash: 1, w: 1.4 }], extra);
+  }
+  const monthKey = (d) => d.slice(0, 7), monthLbl = (k) => new Date(k + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'short' });
+  function monthlyBars(rows) {
+    const idx = returnIndex(rows), by = {};
+    rows.forEach((r, i) => { const k = monthKey(r[0]); if (!by[k]) by[k] = { first: i === 0 ? 100 : idx[i - 1], last: idx[i] }; by[k].last = idx[i]; });
+    return Object.entries(by).slice(-12).map(([k, x]) => ({ v: (x.last / x.first - 1) * 100, label: monthLbl(k) }));
+  }
+  /** The paper-trading charts block for the Activity page. */
+  function paperCharts() {
+    const live = st.equity.length >= 2, rows = live ? st.equity : st.sim.map((r) => [r[0], r[1], r[2], 0]);
+    if (rows.length < 2) return '';
+    const trades = (live ? allLiveTrades() : Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.map((x) => ({ ...x, sym: s })))).filter((t) => t.x).sort((a, b) => a.x.localeCompare(b.x)).slice(-40);
+    const tag = live ? '' : ' · practice run';
+    let h = `<div class="sec">Charts${tag}</div>`;
+    h += `<div class="card"><div class="lbl">Account vs the Nifty</div>${vsNifty(rows)}</div>`;
+    h += `<div class="card"><div class="lbl">Drop from the peak</div>${ddChart(returnIndex(rows))}</div>`;
+    h += `<div class="card"><div class="lbl">Month by month</div>${barChart(monthlyBars(rows))}<div class="m">Return of the whole account each month (deposits and withdrawals excluded).</div></div>`;
+    h += `<div class="card"><div class="lbl">Each closed trade</div>${barChart(trades.map((t) => ({ v: t.ret, label: '' })))}<div class="m">${trades.length ? `Last ${trades.length} trades, oldest left. Tallest win ${pct(Math.max(...trades.map((t) => t.ret)))}, worst loss ${pct(Math.min(...trades.map((t) => t.ret)))}.` : 'No closed trades yet.'}</div></div>`;
+    const byStock = {}; (live ? allLiveTrades() : []).filter((t) => t.x).forEach((t) => { byStock[t.sym] = (byStock[t.sym] || 0) + t.pnl; });
+    const bs = Object.entries(byStock).sort((a, b) => b[1] - a[1]);
+    if (bs.length) h += `<div class="card"><div class="lbl">Profit by stock</div>${barChart(bs.map(([s, v]) => ({ v, label: sym(s).slice(0, 5) })))}<div class="m">Closed trades only.</div></div>`;
+    return h;
+  }
 
   // ---------------------------------------------------------------- predictions UI
   let curSym = null, prevTab = 'home';
@@ -983,6 +1050,7 @@
       <p class="sub">${fd.length ? `earned on unseen data so far · current settings ${pct(comp('baseRes'))}` : `learning on ${fdate(R.start)} – ${fdate(R.folds[0].learnEnd)}…`}</p>
       ${roundsChart(R.history)}`;
     if (!done) h += `<div class="actions"><button class="btn warn sm" id="r_stop">Stop and check results</button></div>`;
+    if (done && R.fullBest) h += `<div style="margin-top:10px">${compareChart(R.fullBest.equity, R.baseFull.equity, R.folds[0].start, R.folds.map((f) => f.start).slice(1))}</div>`;
     h += `</div><div class="sec">Stretches</div><div class="card">` + R.folds.map((f, i) => `<div class="row"><div><b>${i + 1}. Learn to ${fdate(f.learnEnd)} → trade ${fdate(f.start)} – ${fdate(f.end)}</b><div class="m">${f.res ? esc(f.changes.join('; ') || 'current settings') : i === R.fold && !done ? 'learning…' : 'waiting'}</div></div>
       <div class="r">${f.res ? `<b class="${cls(f.res.ret - f.baseRes.ret)}">${pct(f.res.ret)}</b><div class="m">current ${pct(f.baseRes.ret)}</div>` : ''}</div></div>`).join('') + `</div>`;
     if (done) {
@@ -997,6 +1065,7 @@
     const R = train.rep, o = R.opt;
     const fullBest = E.evaluate(R.cfg, o.best, R.data, R.nifty, R.start, R.end, R.lessons);
     const fullBase = E.evaluate(R.cfg, R.base, R.data, R.nifty, R.start, R.end, R.lessons);
+    R.fullBase = fullBase;
     const after = (d) => R.nifty.bars.d.find((x) => x > d) || d;
     Object.assign(R, {
       bestTrain: o.bestScore, baseTrain: R.first,
@@ -1040,6 +1109,17 @@
     if (tab === 'train') render();
   }
 
+  /** Two training accounts + Nifty over the whole period; the part after `split` (never used for tuning) is shaded. */
+  function compareChart(eqA, eqB, split, vl = []) {
+    const n0 = (eqA.find((r) => r[2]) || [])[2], k = Math.ceil(eqA.length / 300) || 1, pick = (a) => a.filter((_, i) => i % k === 0 || i === a.length - 1);
+    const A = pick(eqA), B = pick(eqB.slice(0, eqA.length));
+    const si = A.findIndex((r) => r[0] >= split);
+    return multiLine([
+      { v: A.map((r) => (r[1] / A[0][1]) * 100), color: css('--clay'), name: 'Best settings found' },
+      { v: B.map((r) => (r[1] / B[0][1]) * 100), color: css('--sage'), name: 'Current settings', w: 1.5 },
+      { v: A.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)), color: css('--slate'), name: 'Nifty 50', dash: 1, w: 1.2 },
+    ], { shade: si >= 0 ? si : null, shadeLabel: 'unseen', vlines: vl.map((d) => A.findIndex((r) => r[0] >= d)).filter((i) => i > 0) });
+  }
   function roundsChart(hist) {
     if (hist.length < 1) return '';
     const W = 340, H = 140, P = 8, v = hist.map((h) => h.score), lo = Math.min(0, ...v), hi = Math.max(...v, lo + 1), n = Math.max(hist.length, 2);
@@ -1059,6 +1139,7 @@
       ${roundsChart(o.history)}`;
     if (!done) h += `<div class="actions"><button class="btn warn sm" id="r_stop">Stop and check results</button></div>`;
     h += `</div>`;
+    if (done && R.fullBest && R.fullBase) h += `<div class="card"><div class="lbl">Best settings vs current, whole period</div>${compareChart(R.fullBest.equity, R.fullBase.equity, R.split)}</div>`;
     if (done) {
       h += `<div class="sec">Honest test on unseen data</div><div class="card">
         <div class="row"><div><b>Training part</b><div class="m">${fdate(R.start)} – ${fdate(R.split)} · what the search optimised</div></div><div class="r"><b>${pct(R.bestTrain)}</b><div class="m">current ${pct(R.baseTrain)}</div></div></div>
@@ -1083,7 +1164,7 @@
       let h = `<div class="card hero"><div class="m">${ph === 'done' ? 'Training finished' : 'Trading the past'} · ${esc(train.label)}</div>
         <div class="big" style="font-size:28px">${last ? fdate(last[0]) : fdate(train.start)}</div>
         <p class="sub"><b class="${cls(ret)}">${pct(ret, 1)}</b> · ${inr(last ? last[1] : train.runCapital)} from ${inr(train.runCapital)}${nret != null ? ` · Nifty ${pct(nret)}` : ''}${idx.length > 1 ? ` · max drawdown ${pct(maxDD(idx))}` : ''}</p>
-        ${pnlChart(down(idx, 400))}
+        ${eq.length >= 2 ? vsNifty(eq) : ''}
         <div class="progress" style="padding:10px 0 0"><div class="bar" style="width:${Math.round((done / Math.max(train.total, 1)) * 100)}%"></div></div>
         <div class="m" style="margin-top:6px">${done}/${train.total} sessions${ph === 'running' && train.playing ? ` · about ${Math.ceil((train.total - done) / (train.speed * 2))}s left` : ''}</div>`;
       if (ph === 'running') {
@@ -1095,6 +1176,10 @@
       if (train.missing && train.missing.length) h += `<p class="note" style="margin-top:0">No data for ${esc(train.missing.join(', '))} in this period – left out.</p>`;
       if (ph === 'done') {
         const s = train.summary, P = train.preview;
+        const ct = train.trades.filter((t) => t.x).sort((a, b) => a.x.localeCompare(b.x));
+        h += `<div class="card"><div class="lbl">Drop from the peak</div>${ddChart(idx)}</div>`;
+        h += `<div class="card"><div class="lbl">Month by month</div>${barChart(monthlyBars(eq).slice(-24))}<div class="m">Return each month of the run (last 24 months shown).</div></div>`;
+        h += `<div class="card"><div class="lbl">Each closed trade</div>${barChart(ct.slice(-60).map((t) => ({ v: t.ret, label: '' })))}<div class="m">${ct.length} trades${ct.length > 60 ? ', last 60 shown' : ''}.</div></div>`;
         h += `<div class="card"><div class="grid">
           <div><div class="m">Trades</div><div class="stat">${s.trades}</div></div>
           <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(s.win) ? '–' : Math.round(s.win * 100) + '%'}</div></div>
@@ -1405,6 +1490,7 @@
       const lean = rows.filter(([, t]) => t.pred.outlook.lean !== 'none');
       return say(`${lean.length ? `Where today's signals tilt the odds:\n${lean.map(([x, t]) => `- ${sym(x)}: leans ${t.pred.outlook.lean} – ${Math.round(t.pred.outlook.p5 * 100)}% of similar setups rose within a week vs ${Math.round(t.pred.base.h5.up * 100)}% normally (${t.pred.active.map((a) => a.label).slice(0, 2).join(', ')})`).join('\n')}` : 'None of your stocks has signals with a clear edge today.'}\n\n${rows.length - lean.length} stock${rows.length - lean.length === 1 ? '' : 's'} with no clear edge. Ask **predict RELIANCE** for one stock, or open it in the Guide for the candlestick chart.`);
     }
+    if (/\b(graph|graphs|chart|charts)\b/.test(l) && !symIn()) { tab = 'activity'; render(); return window.scrollTo(0, 0); }
     if (/\b(learn|lesson|rule|brain|smart|avoid)/.test(l)) {
       const R = st.learning.rules, act = Object.entries(R).filter(([, r]) => r.active);
       const evs = st.learning.events.filter((e) => e.kind === 'learn' || e.kind === 'unlearn').slice(-3).map((e) => `- ${fdate(e.date)}: ${e.text}`);
@@ -1422,8 +1508,8 @@
         const ok = E.allowedStrategies(E.brainParams(st));
         const sc = Object.entries(T.scores || {}).filter(([k, v]) => ok.includes(k) && v != null && !Number.isNaN(v)).sort((a, b) => b[1] - a[1]).slice(0, 3);
         const lastT = T.live.trades.slice(-1)[0];
-        return say(`**${sym(s)}** at ${px(T.lastClose)}. ${T.active ? `I'm using **${E.STRATEGIES[T.active].label}** because it had the best record over the last year (Sharpe ${T.scores[T.active].toFixed(2)}).` : !sc.length ? 'I just changed trading style, so I\'ll pick the best strategy for it at the next update.' : 'No strategy has worked well enough on it lately, so I keep it in cash.'}` +
-          (sc.length ? `\n\nBest strategies on it lately:\n${sc.map(([k, v]) => `- ${E.STRATEGIES[k].label}: ${v.toFixed(2)}`).join('\n')}` : '') +
+        return say(`**${sym(s)}** at ${px(T.lastClose)}. ${T.active ? (E.brainParams(st).quick ? `Quick trading with **${(T.quickSet || [T.active]).map((k) => E.STRATEGIES[k].label).join(', ')}** – ${(T.quickSet || [T.active]).length > 1 ? 'they have' : 'it has'} averaged ${pct(T.scores[T.active], 2)} a trade over the last 20 trades.` : `I'm using **${E.STRATEGIES[T.active].label}** because it had the best record over the last year (Sharpe ${T.scores[T.active].toFixed(2)}).`) : !sc.length ? 'I just changed trading style, so I\'ll pick the best strategy for it at the next update.' : 'No strategy has worked well enough on it lately, so I keep it in cash.'}` +
+          (sc.length ? `\n\nBest strategies on it lately:\n${sc.map(([k, v]) => `- ${E.STRATEGIES[k].label}: ${E.brainParams(st).quick ? pct(v, 2) + '/trade' : v.toFixed(2)}`).join('\n')}` : '') +
           `\n\n${T.live.qty ? `I hold ${T.live.qty} shares bought at ${px(lastT.ep)} (${pct((T.lastClose / lastT.ep - 1) * 100)}).` : 'I don\'t hold it.'} ${!sc.length ? '' : `Next review in ${Math.max(1, E.brainParams(st).reviewEvery - T.sinceReview)} sessions.`}`);
       }
     }
