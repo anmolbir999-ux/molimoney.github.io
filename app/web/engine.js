@@ -540,18 +540,63 @@
     const copy = migrate(JSON.parse(JSON.stringify(st)));
     return teach(copy, tr, today, 'preview');
   }
-  function teach(st, tr, today, label) {
+  /** Add past trades to the brain's evidence pool (deduplicated) and re-check the rules. */
+  function addEvidence(st, trades, today, text, src) {
     migrate(st);
     const pool = st.learning.trained = st.learning.trained || [];
     const seen = new Set(pool.map(tradeKey)), before = Object.keys(FEATURES).filter((k) => st.learning.rules[k]?.active);
     let added = 0;
-    for (const t of tr.learning.closed) { const k = tradeKey(t); if (!seen.has(k)) { pool.push({ ...t, src: 'train' }); seen.add(k); added++; } }
-    pool.sort((a, b) => a.x.localeCompare(b.x));
+    for (const t of trades) { const k = tradeKey(t); if (!seen.has(k)) { pool.push({ ...t, src }); seen.add(k); added++; } }
+    pool.sort((x, y) => x.x.localeCompare(y.x));
     if (pool.length > 6000) pool.splice(0, pool.length - 6000);
-    logEvent(st, today, `Training ${label}: added ${added} past trades to the brain's evidence`, 'learn');
+    if (text) logEvent(st, today, text.replace('{n}', added), 'learn');
     updateRules(st, today);
     const after = Object.keys(FEATURES).filter((k) => st.learning.rules[k]?.active);
     return { added, newRules: after.filter((k) => !before.includes(k)), dropped: before.filter((k) => !after.includes(k)) };
+  }
+  function teach(st, tr, today, label) {
+    return addEvidence(st, tr.learning.closed, today, `Training ${label}: added {n} past trades to the brain's evidence`, 'train');
+  }
+
+  // ------------------------------------------------------------------ import a downloaded brain
+  /** Keep only well-formed evidence trades from an imported file (never trust file contents blindly). */
+  function cleanTrades(list) {
+    if (!Array.isArray(list)) return [];
+    const d = /^\d{4}-\d{2}-\d{2}$/;
+    return list.filter((t) => t && typeof t === 'object' && d.test(t.e) && d.test(t.x) && Number.isFinite(+t.ret) && STRATEGIES[t.s])
+      .slice(-8000).map((t) => ({ sym: String(t.sym || '').slice(0, 30), s: t.s, e: t.e, x: t.x, ret: +t.ret, r: ['signal', 'stop', 'target', 'time'].includes(t.r) ? t.r : 'signal',
+        bars: Number.isFinite(+t.bars) ? +t.bars : 0, f: Object.fromEntries(Object.keys(FEATURES).map((k) => [k, !!(t.f && t.f[k])])) }));
+  }
+  /** Read a brain file (from "Brain data" download). Returns what it contains, or { error }. */
+  function readBrain(obj) {
+    if (!obj || typeof obj !== 'object') return { error: 'Not a JSON file from Moli' };
+    if (obj.state && obj.state.cfg && obj.state.tickers) return { kind: 'backup', exported: obj.exported_at, state: obj.state };
+    if (!obj.evidence && !obj.settings) return { error: 'This file has no brain data in it' };
+    const ev = [...cleanTrades(obj.evidence && obj.evidence.lived), ...cleanTrades(obj.evidence && obj.evidence.from_training)];
+    let settings = null;
+    if (obj.settings && typeof obj.settings === 'object') {
+      const S = obj.settings, n = {};
+      for (const k in SPACE) if (SPACE[k].includes(S[k])) n[k] = S[k];
+      if (Number.isFinite(+S.stopAtr) && +S.stopAtr >= 0 && +S.stopAtr <= 10) n.stopAtr = +S.stopAtr;
+      if (Array.isArray(S.strategies)) n.strategies = S.strategies.filter((k) => STRATEGIES[k]);
+      settings = normParams(n);
+    }
+    const trainings = Array.isArray(obj.trainings) ? obj.trainings.filter((x) => x && x.id && x.start && x.end).slice(-30) : [];
+    return { kind: 'brain', exported: obj.exported_at, settings, evidence: ev, trainings,
+      rules: obj.rules && typeof obj.rules === 'object' ? Object.keys(FEATURES).filter((k) => obj.rules[k] && obj.rules[k].active) : [] };
+  }
+  /** Apply an imported brain: its settings and/or its evidence. */
+  function importBrain(st, b, { settings = true, evidence = true } = {}, today, nowIso) {
+    const out = { changes: [], added: 0, newRules: [], dropped: [] };
+    if (settings && b.settings) out.changes = applyParams(st, b.settings, today, nowIso);
+    if (evidence && b.evidence.length) Object.assign(out, addEvidence(st, b.evidence, today, `Imported brain: added {n} trades to the evidence`, 'import'));
+    if (b.trainings.length) { const ids = new Set(st.trainings.map((x) => x.id)); b.trainings.forEach((x) => { if (!ids.has(x.id)) st.trainings.push({ ...x, imported: true }); }); st.trainings.sort((x, y) => String(x.at).localeCompare(String(y.at))); st.trainings.splice(0, Math.max(0, st.trainings.length - 30)); }
+    logEvent(st, today, `You imported brain data${b.exported ? ` exported ${b.exported}` : ''}`, 'user', nowIso);
+    return out;
+  }
+  function previewImport(st, b, opts, today) {
+    const copy = migrate(JSON.parse(JSON.stringify(st)));
+    return importBrain(copy, b, opts, today, 'preview');
   }
 
   function liveTradeCount(st) { // entries + exits so far
@@ -922,7 +967,7 @@
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
     predict, SIGNALS, signalMatrix,
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, allowedStrategies,
-    begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach,
+    begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.Engine = api;
 })(this);
