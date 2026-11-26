@@ -272,6 +272,7 @@
         <label>Stop-loss</label><div class="chips" style="margin:0">${[1, 1.5, 2, 3].map((v) => `<button class="chip ${B.stopAtr === v ? 'on' : ''}" data-sl="${v}">${v}× ATR</button>`).join('')}</div>
         <label>Time limit</label><div class="chips" style="margin:0">${[0, 3, 5, 10, 20].map((v) => `<button class="chip ${B.maxDays === v ? 'on' : ''}" data-md="${v}">${v ? v + ' sessions' : 'off'}</button>`).join('')}</div>
         <p class="m" style="margin:10px 0 0">ATR = a stock's typical daily move. +2× ATR is roughly two normal days' move – often 3–5%.</p>` : ''}</div>`;
+    h += `<div class="card"><div class="setrow"><div class="stx"><h3>Never repeat a mistake</h3><div class="m">When a trade loses more than 1% with warning signs at entry, I note it and never make that exact trade again (same stock, strategy and warning signs). Forgiven if it would have made money more often. ${(st.learning.mistakes || []).filter((m) => !m.forgiven).length} noted now.</div></div><input type="checkbox" class="tog" id="b_mem" ${B.useMemory ? 'checked' : ''}></div></div>`;
     h += `<div class="sec">Brain settings</div><div class="card"><ul class="tags" style="font-size:14px;color:var(--fg);margin:0">${E.describeParams(E.brainParams(st)).map((c) => `<li>${esc(c)}</li>`).join('')}</ul>
       <div class="actions"><button class="btn ghost sm" id="b_reset">Reset to defaults</button></div><p class="m" style="margin:8px 0 0">Repeat training (Train on the past → Repeat until best) can tune these.</p></div>`;
     h += `<div class="sec">Download your data</div><div class="card">
@@ -379,6 +380,8 @@
     }
     const lastLearn = st.learning.events.filter((e) => e.kind === 'learn' && /Learned: avoid/.test(e.text)).slice(-1)[0];
     if (lastLearn && lastLearn.date >= st.paperStart) add({ kind: 'good', title: 'I learned something', body: lastLearn.text.replace('Learned: ', 'Now I ') });
+    const MM = (st.learning.mistakes || []).filter((m) => !m.forgiven), skipped = MM.reduce((a, m) => a + (m.blocked || 0), 0);
+    if (MM.length && skipped) add({ kind: 'good', title: `I skipped ${skipped} repeat${skipped > 1 ? 's' : ''} of past mistakes`, body: `I've noted ${MM.length} mistake${MM.length > 1 ? 's' : ''} and haven't repeated any. The latest: ${memText(MM[MM.length - 1])}, which lost ${pct(MM[MM.length - 1].ret)}.`, pill: `${MM.length} noted`, act: ['guide', 'See them'] });
     const lastTrain = st.trainings.slice(-1)[0];
     if (!lastTrain || Date.now() - Date.parse(lastTrain.at) > 30 * 864e5) add({ kind: 'idea', title: 'Test my settings on the past', body: `Walk-forward training learns on one stretch of history and trades the next one blind – the most honest check of whether my settings work. Takes a few seconds.`, act: ['train-walk', 'Walk forward 5 years'] });
     if (S.n >= 8 && S.winRate < 0.35 && S.avgWin > Math.abs(S.avgLoss) * 2) add({ kind: 'good', title: 'Few wins, but big ones', body: `Only ${Math.round(S.winRate * 100)}% of trades win, but winners average ${pct(S.avgWin)} vs losers ${pct(S.avgLoss)}. That's how trend-following works – the losses are the cost of catching big moves.` });
@@ -397,6 +400,7 @@
     if (a === 'resume') { E.setPause(st, null, todayIST(), nowIso()); store.save(st); toast('Trading resumed'); return render(); }
     if (a === 'stopall') { if (!confirm('Sell every position at the next open and stop buying?')) return; E.setPause(st, 'stop', todayIST(), nowIso()); store.save(st); toast('Stopped: positions sell at the next open'); return render(); }
     if (a === 'stocks') { tab = 'stocks'; render(); return window.scrollTo(0, 0); }
+    if (a === 'guide') { tab = 'guide'; render(); return window.scrollTo(0, 0); }
     if (a === 'chat') { tab = 'chat'; render(); return scrollEnd(); }
     if (a === 'settings') { tab = 'settings'; render(); return window.scrollTo(0, 0); }
     if (a === 'wrapped') return openWrapped();
@@ -439,7 +443,7 @@
     if (pend.length || blk.length) {
       h += `<div class="card"><div class="lbl">Next open · in ${cdSpan(mk.nextOpen)}</div>`;
       h += pend.map(([s, t]) => `<div class="row"><div><b>${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}</b><div class="m">${t.removing ? 'removing stock' : esc(E.STRATEGIES[t.active]?.label || 'exit to cash')}</div></div><div class="r m">9:15 AM</div></div>`).join('');
-      h += blk.map(([s, t]) => `<div class="row"><div><b>Skip ${sym(s)}</b><div class="m">${esc(E.STRATEGIES[t.active]?.label || '')} said buy – blocked by a learned rule: ${t.blockedToday.rules.map((k) => esc(E.FEATURES[k].label.toLowerCase())).join(', ')}</div></div></div>`).join('') + `</div>`;
+      h += blk.map(([s, t]) => `<div class="row"><div><b>Skip ${sym(s)}</b><div class="m">${esc(E.STRATEGIES[t.active]?.label || '')} said buy – ${(() => { const m = t.blockedToday.mem && (st.learning.mistakes || []).find((x) => x.id === t.blockedToday.mem); return m ? `same mistake as on ${fdate(m.date)} (lost ${pct(m.ret)}) – not again` : `blocked by a learned rule: ${t.blockedToday.rules.map((k) => esc(E.FEATURES[k].label.toLowerCase())).join(', ')}`; })()}</div></div></div>`).join('') + `</div>`;
     }
     const pos = Object.entries(T).filter(([, t]) => t.live.qty > 0);
     h += `<div class="card"><div class="lbl">Positions</div>` + (pos.length ? pos.map(([s, t]) => {
@@ -487,7 +491,8 @@
         const r = open && last ? (last / t.ep - 1) * 100 : null;
         return head + `<div class="stx"><span class="badge open">${ini}</span><div class="mid"><b>Bought ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${t.q} @ ${px(t.ep)} · ${esc(E.STRATEGIES[t.s]?.label || '')}</div></div><div class="r">${open ? `<b class="${cls(r)}">${pct(r)}</b><div class="m">holding</div>` : `<span class="m">${inr(t.ep * t.q)}</span>`}</div></div>`;
       }
-      const tags = t.pnl <= 0 ? `<div class="m" style="margin-top:3px">${esc(E.diagnose(t)[0])}</div>` : '';
+      const mm = t.pnl <= 0 ? memOf(t) : null;
+      const tags = t.pnl <= 0 ? `<div class="m" style="margin-top:3px">${esc(E.diagnose(t)[0])}${mm ? ` · <span class="${mm.forgiven ? '' : 'down'}">${mm.forgiven ? 'noted, later forgiven' : 'noted – won\'t repeat'}</span>` : ''}</div>` : '';
       const why = t.r === 'stop' ? 'stop-loss' : t.r === 'target' ? 'profit target' : t.r === 'time' ? 'time limit' : 'signal';
       return head + `<div class="stx"><span class="badge ${t.pnl > 0 ? 'win' : ''}">${ini}</span><div class="mid"><b>Sold ${sym(t.sym)}</b><div class="m">${fdate(d)} · ${why} · held ${t.bars || 0}d</div>${tags}</div><div class="r"><b class="${cls(t.pnl)}">${t.pnl > 0 ? '+' : ''}${inr(t.pnl)}</b><div class="m">${pct(t.ret)}</div></div></div>`;
     }).join('');
@@ -512,6 +517,7 @@
     h += `<div class="sec">Suggestions</div>` + adv.map(advCard).join('');
     h += `<div class="sec">Predictions · candles, chart patterns &amp; trend</div>` + predictionsCard();
     const R = st.learning.rules;
+    h += `<div class="sec">Mistakes I won't repeat</div>` + mistakesCard(st.learning.mistakes);
     h += `<div class="sec">What I've learned</div><div class="card">` + Object.entries(E.FEATURES).map(([k, f]) => {
       const r = R[k] || {};
       const evd = r.nWith ? `${r.nWith} trades with it: avg ${pct(r.meanWith)}, win ${Math.round((r.winWith || 0) * 100)}% · without: avg ${pct(r.meanWithout)}` : 'Not enough trades yet';
@@ -572,7 +578,7 @@
     const niftyToday = st.equity.length >= 2 && nfr[0][2] && nfr[1][2] ? (nfr[1][2] / nfr[0][2] - 1) * 100 : null;
     const eq = eqNow(), dayPnl = nfr ? nfr[1][1] - nfr[0][1] - ((nfr[1][3] || 0) - (nfr[0][3] || 0)) : 0;
     const today = allLiveTrades().flatMap((t) => [...(t.e === d ? [`Bought ${t.q} ${sym(t.sym)} at ${px(t.ep)}`] : []), ...(t.x === d ? [`Sold ${sym(t.sym)} – ${t.pnl >= 0 ? 'made' : 'lost'} ${inr(Math.abs(t.pnl))}`] : [])]);
-    const learnt = st.learning.events.filter((e) => e.date === d && (e.kind === 'learn' || e.kind === 'switch' || e.kind === 'unlearn')).map((e) => e.text);
+    const learnt = st.learning.events.filter((e) => e.date === d && (e.kind === 'learn' || e.kind === 'switch' || e.kind === 'unlearn' || e.kind === 'mistake')).map((e) => e.text);
     const adv = advice()[0];
     const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending).map(([s, t]) => `${t.live.pending === 'BUY' ? 'buy' : 'sell'} ${sym(s)}`);
     const dayName = new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long' });
@@ -680,6 +686,17 @@
     const bs = Object.entries(byStock).sort((a, b) => b[1] - a[1]);
     if (bs.length) h += `<div class="card"><div class="lbl">Profit by stock</div>${barChart(bs.map(([s, v]) => ({ v, label: sym(s).slice(0, 5) })))}<div class="m">Closed trades only.</div></div>`;
     return h;
+  }
+
+  // ---------------------------------------------------------------- mistake memory UI
+  const memText = (m) => `${sym(m.sym)} · ${E.STRATEGIES[m.s] ? E.STRATEGIES[m.s].label : m.s} while ${m.keys.map((k) => E.FEATURES[k].label.toLowerCase()).join(' and ')}`;
+  const memOf = (t) => { const keys = Object.keys(E.FEATURES).filter((k) => t.f && t.f[k]).join('+'); return (st.learning.mistakes || []).find((m) => m.id === `${t.sym}|${t.s}|${keys}`); };
+  function mistakesCard(list, { empty = 'No mistakes noted yet. When a trade loses more than 1% with warning signs at entry, I note it here and never make that exact trade again.' } = {}) {
+    const M = (list || []).slice().reverse(), act = M.filter((m) => !m.forgiven), fg = M.filter((m) => m.forgiven);
+    if (!M.length) return `<div class="card"><p class="empty">${empty}</p></div>`;
+    const one = (m) => `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:10px"><b>${esc(memText(m))}</b><span class="pill ${m.forgiven ? '' : 'neg'}" style="${m.forgiven ? 'background:var(--line);color:var(--muted)' : ''}">${m.forgiven ? 'forgiven' : 'never again'}</span></div>
+      <div class="m" style="margin-top:3px">Lost ${pct(m.ret)} on ${fdate(m.date)}${m.count > 1 ? ` (noted ${m.count}×)` : ''}${m.from ? ` · learned in ${m.from}` : m.inherited ? ' · from earlier lessons' : ''}.${m.blocked ? ` Skipped it ${m.blocked}× since.` : ''}${m.avoided || m.missed ? ` Similar trades since: ${m.avoided} lost${m.avoided ? ` (avg ${pct(-m.saved / m.avoided)})` : ''}, ${m.missed} won.` : ''}${m.forgiven ? ' Forgiven – those trades made money more often, so it was probably bad luck.' : ''}</div></div>`;
+    return `<div class="card">${act.slice(0, 15).map(one).join('')}${act.length > 15 ? `<p class="m">…and ${act.length - 15} more</p>` : ''}${fg.length ? `<details style="margin-top:8px"><summary class="m">Forgiven (${fg.length}) ›</summary>${fg.slice(0, 10).map(one).join('')}</details>` : ''}</div>`;
   }
 
   // ---------------------------------------------------------------- predictions UI
@@ -811,7 +828,7 @@
     } else {
       const pv = E.previewImport(st, b, opts, todayIST()), cur = E.brainParams(st);
       const ch = b.settings ? E.describeParams(b.settings, cur) : [];
-      h += `<h2>Import brain data</h2><div class="says" style="margin:0 0 10px">${buddy(56, 'thinking')}<div class="bub"><div class="lbl">Brain file${b.exported ? ' · ' + esc(b.exported) : ''}</div><h3>${b.evidence.length} learned trades${b.settings ? ' + settings' : ''}</h3><p>${b.rules.length ? `It was avoiding: ${b.rules.map((k) => E.FEATURES[k].label.toLowerCase()).join('; ')}.` : 'It had no avoid-rules switched on.'}${b.trainings.length ? ` ${b.trainings.length} training runs.` : ''}</p></div></div>
+      h += `<h2>Import brain data</h2><div class="says" style="margin:0 0 10px">${buddy(56, 'thinking')}<div class="bub"><div class="lbl">Brain file${b.exported ? ' · ' + esc(b.exported) : ''}</div><h3>${b.evidence.length} learned trades${b.mistakes && b.mistakes.length ? ` + ${b.mistakes.length} noted mistakes` : ''}${b.settings ? ' + settings' : ''}</h3><p>${b.rules.length ? `It was avoiding: ${b.rules.map((k) => E.FEATURES[k].label.toLowerCase()).join('; ')}.` : 'It had no avoid-rules switched on.'}${b.trainings.length ? ` ${b.trainings.length} training runs.` : ''}</p></div></div>
         <div class="card" style="margin-bottom:10px"><div class="setrow"><div class="stx"><h3 style="font-size:18px">Use its settings</h3><div class="m">${!b.settings ? 'Not in this file.' : ch.length ? ch.map(esc).join(' · ') : 'Same as mine.'}</div></div><input type="checkbox" class="tog" id="imp_set" ${opts.settings && b.settings ? 'checked' : ''} ${b.settings ? '' : 'disabled'}></div></div>
         <div class="card" style="margin-bottom:10px"><div class="setrow"><div class="stx"><h3 style="font-size:18px">Add what it learned</h3><div class="m">${pv.added} new trades join my evidence (${b.evidence.length - pv.added} I already had).${pv.newRules.length || pv.dropped.length ? ` I'd ${[...pv.newRules.map((k) => 'start avoiding ' + E.FEATURES[k].label.toLowerCase()), ...pv.dropped.map((k) => 'stop avoiding ' + E.FEATURES[k].label.toLowerCase())].join(', ')}.` : ' My rules wouldn\'t change.'}</div></div><input type="checkbox" class="tog" id="imp_ev" ${opts.evidence ? 'checked' : ''}></div></div>
         <p class="m" style="margin:4px 2px 0">Your paper money, stocks and trades stay as they are. Strategy choices per stock are re-learned from your own data.</p>
@@ -886,14 +903,15 @@
       const tickers = st.cfg.tickers.filter((t) => data[t]);
       if (!tickers.length) throw new Error('No stock has data for that period');
       const lessons = train.brain === 'lessons' ? E.lessonsBefore(st, start) : [];
+      const mistakes = train.brain === 'lessons' ? E.mistakesBefore(st, start) : [];
       const capital = trainCapital();
       if (train.mode === 'repeat') {
         busy = false; cancel = false;
         btn.textContent = 'Update'; btn.classList.remove('stop'); $('progress').hidden = true;
-        return startRepeat({ data, nifty, tickers, missing, lessons, capital, start, end });
+        return startRepeat({ data, nifty, tickers, missing, lessons, mistakes, capital, start, end });
       }
       const P = styleParams(train.style);
-      const tst = E.newTraining({ ...st.cfg, tickers, capital, stopAtr: P.stopAtr, brain: { ...P } }, start, end, lessons);
+      const tst = E.newTraining({ ...st.cfg, tickers, capital, stopAtr: P.stopAtr, brain: { ...P } }, start, end, lessons, mistakes);
       progress(syms.length, syms.length, 'Warming up');
       await new Promise((ok) => setTimeout(ok, 30));
       const ctx = E.begin(tst, data, nifty, Date.now());
@@ -941,7 +959,7 @@
     const h = st.trainings.find((x) => x.id === train.summary.id); if (h) h.taught = true;
     store.save(st); train.preview = null; render();
     toast(`Live brain learned from ${r.added} past trades`);
-    say(`Done – I added **${r.added}** trades from ${esc(train.summary.label)} to my evidence.` +
+    say(`Done – I added **${r.added}** trades from ${esc(train.summary.label)} to my evidence${r.mistakes ? ` and will never repeat its ${r.mistakes} noted mistake${r.mistakes > 1 ? 's' : ''}` : ''}.` +
       (r.newRules.length ? `\n\nNow avoiding:\n${r.newRules.map((k) => '- ' + E.FEATURES[k].label.toLowerCase()).join('\n')}` : '') +
       (r.dropped.length ? `\n\nNo longer avoiding:\n${r.dropped.map((k) => '- ' + E.FEATURES[k].label.toLowerCase()).join('\n')}` : '') +
       (!r.newRules.length && !r.dropped.length ? ' None of my rules changed – it just adds evidence.' : ''));
@@ -955,7 +973,7 @@
     walk: ['Walk forward', 'Learns on the past, trades the next stretch it has never seen, adds it to what it knows and moves on. Every result is earned on unseen data – the most honest test.'],
   };
   function startRepeat(args) {
-    const { data, nifty, tickers, missing, lessons, capital, start, end } = args;
+    const { data, nifty, tickers, missing, lessons, mistakes, capital, start, end } = args;
     const days = nifty.bars.d.filter((d) => d >= start && d <= end);
     if (days.length < 120) { toast('Pick a longer period (at least 6 months)'); train.phase = 'setup'; return render(); }
     if (train.route === 'walk') return startWalk(args, days);
@@ -964,13 +982,13 @@
     const cfg = { ...st.cfg, tickers, capital };
     const seed = Date.now() % 100000;
     const opt = train.route === 'evolve' ? E.makeEvolver(base, { maxRounds: train.rounds, popSize: 8, seed }) : E.makeOptimizer(base, { maxRounds: train.rounds, patience: 10, seed });
-    Object.assign(train, { phase: 'repeating', rep: { route: train.route, data, nifty, cfg, lessons, start, end, split, base, opt, missing, stop: false, first: null }, runCapital: capital });
+    Object.assign(train, { phase: 'repeating', rep: { route: train.route, data, nifty, cfg, lessons, mistakes, start, end, split, base, opt, missing, stop: false, first: null }, runCapital: capital });
     render();
     const round = () => {
       const R = train.rep; if (!R || train.phase !== 'repeating') return;
       const p = R.stop ? null : R.opt.next();
       if (!p) return repeatDone();
-      const tst = E.evaluate(R.cfg, p, R.data, R.nifty, R.start, R.split, R.lessons);
+      const tst = E.evaluate(R.cfg, p, R.data, R.nifty, R.start, R.split, R.lessons, R.mistakes);
       const s0 = E.periodStats(tst, R.start, R.split);
       R.opt.report(p, s0.ret, { dd: s0.dd });
       if (R.first == null) R.first = s0.ret;
@@ -982,27 +1000,27 @@
 
 
   // walk forward: learn on an expanding window, trade the next unseen stretch, repeat
-  function startWalk({ data, nifty, tickers, missing, lessons, capital, start, end }, days) {
+  function startWalk({ data, nifty, tickers, missing, lessons, mistakes, capital, start, end }, days) {
     const F = 3, L0 = Math.floor(days.length * 0.4), size = Math.floor((days.length - L0) / F);
     const folds = Array.from({ length: F }, (_, f) => ({ learnEnd: days[L0 + f * size - 1], start: days[L0 + f * size], end: f === F - 1 ? days[days.length - 1] : days[L0 + (f + 1) * size - 1] }));
     const base = styleParams(train.style), cfg = { ...st.cfg, tickers, capital }, per = Math.max(5, Math.round(train.rounds / F));
-    const R = { route: 'walk', data, nifty, cfg, lessons, start, end, base, missing, folds, fold: 0, per, cur: E.normParams(base), stop: false, history: [], first: null };
+    const R = { route: 'walk', data, nifty, cfg, lessons, mistakes, start, end, base, missing, folds, fold: 0, per, cur: E.normParams(base), stop: false, history: [], first: null };
     R.opt = E.makeOptimizer(R.cur, { maxRounds: per, patience: 5, seed: 3 });
-    R.baseFull = E.evaluate(cfg, base, data, nifty, start, end, lessons);
+    R.baseFull = E.evaluate(cfg, base, data, nifty, start, end, lessons, mistakes);
     Object.assign(train, { phase: 'repeating', rep: R, runCapital: capital });
     render();
     const round = () => {
       if (train.rep !== R || train.phase !== 'repeating') return;
       const F0 = R.folds[R.fold], p = R.stop ? null : R.opt.next();
       if (p) {
-        const tst = E.evaluate(R.cfg, p, R.data, R.nifty, R.start, F0.learnEnd, R.lessons);
+        const tst = E.evaluate(R.cfg, p, R.data, R.nifty, R.start, F0.learnEnd, R.lessons, R.mistakes);
         const s0 = E.periodStats(tst, R.start, F0.learnEnd);
         const better = R.opt.report(p, s0.ret, { dd: s0.dd });
         R.history.push({ round: R.history.length + 1, fold: R.fold + 1, params: E.normParams(p), score: s0.ret, dd: s0.dd, better });
       } else {
         // stretch finished: trade the unseen part with the best settings learned so far
         if (R.opt.rounds) R.cur = R.opt.best;
-        const tst = E.evaluate(R.cfg, R.cur, R.data, R.nifty, R.start, F0.end, R.lessons);
+        const tst = E.evaluate(R.cfg, R.cur, R.data, R.nifty, R.start, F0.end, R.lessons, R.mistakes);
         Object.assign(F0, { params: R.cur, changes: E.describeParams(R.cur, R.base), res: E.periodStats(tst, F0.start, F0.end), baseRes: E.periodStats(R.baseFull, F0.start, F0.end) });
         R.fold++;
         if (R.stop || R.fold >= R.folds.length) return walkDone();
@@ -1020,7 +1038,7 @@
     R.total = comp('res'); R.baseTotal = comp('baseRes');
     R.final = R.cur; R.changes = E.describeParams(R.final, R.base);
     R.good = R.changes.length > 0 && R.total > R.baseTotal;
-    R.fullBest = E.evaluate(R.cfg, R.final, R.data, R.nifty, R.start, R.end, R.lessons);
+    R.fullBest = E.evaluate(R.cfg, R.final, R.data, R.nifty, R.start, R.end, R.lessons, R.mistakes);
     const label = train.preset === 'custom' ? `${fdate(R.start)} – ${fdate(R.end)}` : PRESETS[train.preset][0];
     const sum = { id: Date.now().toString(36), at: nowIso(), kind: 'repeat', route: 'walk', label: `${label} · walk forward`, start: R.start, end: R.end,
       brain: train.brain, stocks: R.cfg.tickers.length, capital: train.runCapital, ret: R.total, nret: null, dd: Math.min(0, ...done.map((f) => f.res.dd)),
@@ -1063,8 +1081,8 @@
 
   function repeatDone() {
     const R = train.rep, o = R.opt;
-    const fullBest = E.evaluate(R.cfg, o.best, R.data, R.nifty, R.start, R.end, R.lessons);
-    const fullBase = E.evaluate(R.cfg, R.base, R.data, R.nifty, R.start, R.end, R.lessons);
+    const fullBest = E.evaluate(R.cfg, o.best, R.data, R.nifty, R.start, R.end, R.lessons, R.mistakes);
+    const fullBase = E.evaluate(R.cfg, R.base, R.data, R.nifty, R.start, R.end, R.lessons, R.mistakes);
     R.fullBase = fullBase;
     const after = (d) => R.nifty.bars.d.find((x) => x > d) || d;
     Object.assign(R, {
@@ -1185,11 +1203,12 @@
           <div><div class="m">Win rate</div><div class="stat">${Number.isNaN(s.win) ? '–' : Math.round(s.win * 100) + '%'}</div></div>
           <div style="margin-top:10px"><div class="m">Net P&amp;L</div><b class="${cls(s.pnl)}">${inr(s.pnl)}</b></div>
           <div style="margin-top:10px"><div class="m">vs Nifty</div><b class="${cls(s.ret - (s.nret || 0))}">${s.nret == null ? '–' : pct(s.ret - s.nret) + ' pts'}</b></div></div></div>`;
+        h += `<div class="sec">Mistakes noted in this run</div>` + mistakesCard((train.tst.learning.mistakes || []), { empty: 'No mistakes noted in this run.' });
         h += `<div class="sec">Apply to the live brain</div><div class="card">`;
         if (s.taught) h += `<p class="empty">Done – your live brain now includes these ${train.tst.learning.closed.length} past trades as evidence.</p>`;
         else {
           const ch = [...P.newRules.map((k) => `<li>Start avoiding: ${esc(E.FEATURES[k].label.toLowerCase())}</li>`), ...P.dropped.map((k) => `<li>Stop avoiding: ${esc(E.FEATURES[k].label.toLowerCase())}</li>`)];
-          h += `<p class="sub" style="margin:0">Adds ${P.added} past trades (from all ${Object.keys(E.STRATEGIES).length} strategies) to the evidence your live brain uses for its rules.</p>
+          h += `<p class="sub" style="margin:0">Adds ${P.added} past trades (from all ${Object.keys(E.STRATEGIES).length} strategies) to the evidence your live brain uses for its rules${(train.tst.learning.mistakes || []).filter((m) => !m.forgiven && !m.inherited).length ? `, and ${(train.tst.learning.mistakes || []).filter((m) => !m.forgiven && !m.inherited).length} mistakes to never repeat` : ''}.</p>
             <ul class="tags">${ch.length ? ch.join('') : '<li>No rule would change right now – it just adds evidence.</li>'}</ul>
             <div class="actions"><button class="btn sm" id="t_teach"${P.added ? '' : ' disabled'}>Apply what it learned</button></div>`;
         }
@@ -1357,7 +1376,7 @@
     }));
     st.archive.forEach((x) => { if (x.x && x.x > (prev || '')) acts.push([x.x, `Sold ${sym(x.sym)} at ${px(x.xp)} (${pct(x.ret)}) and removed it`]); });
     acts.sort((a, b) => a[0].localeCompare(b[0]));
-    const evs = res.newEvents.filter((e) => e.kind === 'learn' || e.kind === 'unlearn' || e.kind === 'switch').map((e) => e.text);
+    const evs = res.newEvents.filter((e) => e.kind === 'learn' || e.kind === 'unlearn' || e.kind === 'switch' || e.kind === 'mistake').map((e) => e.text);
     const pend = pendingLines();
     return `**${fdate(st.lastDate)}** – ${res.days} new session${res.days > 1 ? 's' : ''}.` +
       `\n\n${acts.length ? acts.map((a) => `- ${a[1]}`).join('\n') : 'No trades.'}` +
@@ -1370,7 +1389,9 @@
     const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 3);
     const P = train.preview, ch = [...P.newRules.map((k) => `start avoiding ${E.FEATURES[k].label.toLowerCase()}`), ...P.dropped.map((k) => `stop avoiding ${E.FEATURES[k].label.toLowerCase()}`)];
     const S2 = E.stats(train.trades);
-    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}, ${E.brainParams(train.tst).quick ? 'quick' : 'normal'} trading) is done. Trades lasted ${Number.isNaN(S2.avgDays) ? '–' : S2.avgDays.toFixed(1)} sessions on average${S2.targets ? `, ${S2.targets} hit the profit target` : ''}. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
+    const TM = train.tst.learning.mistakes || [], tmNew = TM.filter((m) => !m.inherited), tmBlocked = TM.reduce((a, m) => a + (m.blocked || 0), 0);
+    sum.mistakes = tmNew.length; sum.skipped = tmBlocked;
+    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}, ${E.brainParams(train.tst).quick ? 'quick' : 'normal'} trading) is done. I noted ${tmNew.length} mistake${tmNew.length === 1 ? '' : 's'} along the way and skipped repeating them ${tmBlocked}×. Trades lasted ${Number.isNaN(S2.avgDays) ? '–' : S2.avgDays.toFixed(1)} sessions on average${S2.targets ? `, ${S2.targets} hit the profit target` : ''}. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
       (top.length ? `\n\nMy most common mistakes:\n${top.map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : '') +
       `\n\n${ch.length ? `Say **apply** and I'll use what I learned: add these ${P.added} trades to my evidence and ${ch.join(', ')}.` : `Say **apply** and I'll add these ${P.added} trades to my evidence. None of my rules would change.`} Remember: a good result on the past can be luck.`;
   }
@@ -1497,10 +1518,12 @@
       return say((act.length ? `I avoid buying when:\n${act.map(([k, r]) => `- ${E.FEATURES[k].label.toLowerCase()} – ${r.nWith} such trades averaged ${pct(r.meanWith)} vs ${pct(r.meanWithout)} otherwise`).join('\n')}` : 'I haven\'t found any condition that clearly loses money yet.') + (evs.length ? `\n\nLatest:\n${evs.join('\n')}` : ''));
     }
     if (/\b(mistake|wrong|losing|losses)/.test(l) && !/how/.test(l)) {
+      const M = (st.learning.mistakes || []), act = M.filter((m) => !m.forgiven);
+      const memLine = M.length ? `\n\nMistakes I won't repeat (${act.length}${M.length - act.length ? `, ${M.length - act.length} forgiven` : ''}):\n${act.slice(-6).reverse().map((m) => `- ${memText(m)} – lost ${pct(m.ret)} on ${fdate(m.date)}${m.blocked ? `, skipped ${m.blocked}× since` : ''}`).join('\n')}` : '\n\nNo mistakes noted yet.';
       const tr = allLiveTrades().filter((t) => t.x && t.pnl <= 0), tally = {};
       tr.forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
       const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
-      return say(tr.length ? `${tr.length} losing trade${tr.length > 1 ? 's' : ''} so far. What went wrong:\n${tl.slice(0, 5).map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : 'No losing paper trades yet. Ask again after a few weeks.');
+      return say((tr.length ? `${tr.length} losing trade${tr.length > 1 ? 's' : ''} so far. What went wrong:\n${tl.slice(0, 5).map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : 'No losing paper trades yet.') + memLine);
     }
     if (/\bwhy\b|\?$/.test(l) || symIn()) {
       const s0 = symIn(), s = s0 && normSym(s0), T = s && st.tickers[s];
@@ -1577,6 +1600,7 @@
         strategies: Object.fromEntries(Object.entries(st.tickers).map(([s, t]) => [sym(s), { active: t.active ? E.STRATEGIES[t.active].label : null, scores_sharpe_last_year: Object.fromEntries(Object.entries(t.scores || {}).filter(([, v]) => v != null && !Number.isNaN(v)).map(([k, v]) => [E.STRATEGIES[k].label, Math.round(v * 100) / 100])), next_review_in_sessions: E.brainParams(st).reviewEvery - t.sinceReview }])),
         predictions: Object.fromEntries(Object.entries(st.tickers).filter(([, t]) => t.pred).map(([s, t]) => { const { chart, ...rest } = t.pred; return [sym(s), rest]; })),
         evidence: { lived: st.learning.closed, from_training: st.learning.trained || [] },
+        mistakes: st.learning.mistakes || [],
         events: st.learning.events, trainings: st.trainings,
       };
       return download(name, mime, JSON.stringify(brain, null, 1));
@@ -1658,6 +1682,7 @@
     document.querySelectorAll('[data-tp]').forEach((b) => { b.onclick = () => { setStyle(true, { tpAtr: +b.dataset.tp }); render(); }; });
     document.querySelectorAll('[data-sl]').forEach((b) => { b.onclick = () => { setStyle(true, { stopAtr: +b.dataset.sl }); render(); }; });
     document.querySelectorAll('[data-md]').forEach((b) => { b.onclick = () => { setStyle(true, { maxDays: +b.dataset.md }); render(); }; });
+    const bm = $('b_mem'); if (bm) bm.onchange = () => { E.applyParams(st, { ...E.brainParams(st), useMemory: bm.checked }, todayIST(), nowIso()); store.save(st); toast(bm.checked ? 'Mistake memory on' : 'Mistake memory off'); };
     on('b_reset', () => { const ch = E.applyParams(st, { ...E.BRAIN_DEFAULTS, stopAtr: 3 }, todayIST(), nowIso()); store.save(st); toast(ch.length ? 'Brain settings reset' : 'Already on defaults'); render(); });
     on('m_add', money('add')); on('m_wd', money('withdraw')); on('m_set', money('set'));
     document.querySelectorAll('[data-act]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); const a = b.dataset.act; if (a === 'nexttip') { tipIdx++; return render(); } doAct(a); }; });
