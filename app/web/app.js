@@ -158,6 +158,7 @@
       const before = st.lastDate;
       const res = E.run(st, data, nifty, Date.now());
       for (const s in data) if (st.tickers[s]) { try { st.tickers[s].pred = E.predict(data[s].bars, { nifty: nifty && nifty.bars }); } catch (e) { /* keep old */ } }
+      if (nifty) { const nd = nifty.bars.d; look = { data, nifty, start: nd[Math.max(0, nd.length - 250)], pcSym: look && look.pcSym, pc: null }; }
       const brief = briefing(res, before);
       if (brief) say(brief, res.days > 300 ? 'sim' : res.days ? 'pnl' : null);
       Object.assign(run, { days: res.days, from: res.days ? (before || st.warmStart) : null, to: st.lastDate });
@@ -265,9 +266,12 @@
       <p class="m" style="margin:10px 0 0">Added money is split equally across your stocks. Withdrawals come from cash only. Neither counts as profit or loss.</p></div>`;
     const B = E.brainParams(st);
     h += `<div class="sec">Trading style</div><div class="card"><div class="chips" style="margin:0">
-        <button class="chip ${!B.quick ? 'on' : ''}" data-tstyle="normal">Normal – ride trends</button>
+        <button class="chip ${B.beat ? 'on' : ''}" data-tstyle="beat">Beat the Nifty – stay invested</button>
+        <button class="chip ${!B.quick && !B.beat ? 'on' : ''}" data-tstyle="normal">Normal – ride trends</button>
         <button class="chip ${B.quick ? 'on' : ''}" data-tstyle="quick">Quick – in and out</button></div>
-      <p class="m" style="margin:10px 0 0">${B.quick ? 'Enters fast on sharp dips, pullbacks and volume breakouts, and exits fast: at the profit target, the stop-loss or the time limit. Expect many small trades lasting days. More trades means more costs (STT, stamp duty) – they can eat small profits.' : 'Holds trends for weeks or months. Fewer trades, bigger wins and losses.'}</p>
+      ${B.beat ? `<p class="m" style="margin:10px 0 0">Holds every stock and steps aside only in a market crash. No stop-losses, no switching. ${esc(BEAT_TEST.replace(/\\'/g, "'"))}</p>
+        <label>Step aside when the Nifty is below its 200-day average by</label><div class="chips" style="margin:0">${[5, 8, 12, 100].map((v) => `<button class="chip ${B.crashGap === v ? 'on' : ''}" data-cg="${v}">${v >= 100 ? 'never' : v + '%'}</button>`).join('')}</div>
+        <p class="m" style="margin:8px 0 0">5%: smaller falls (worst −36% in 2008) · never: a bit more return on average, but fell 55% in 2008 and 39% in 2020.</p>` : `<p class="m" style="margin:10px 0 0">${B.quick ? 'Enters fast on sharp dips, pullbacks and volume breakouts, and exits fast: at the profit target, the stop-loss or the time limit. Expect many small trades lasting days. More trades means more costs (STT, stamp duty) – they can eat small profits.' : 'Holds trends for weeks or months. Fewer trades, bigger wins and losses. In tests it beat the Nifty in crashes but trailed it badly in bull markets (2012–21, 2023–25).'}</p>`}
       ${B.quick ? `<label>Take profit at</label><div class="chips" style="margin:0">${[0, 1, 1.5, 2, 3].map((v) => `<button class="chip ${B.tpAtr === v ? 'on' : ''}" data-tp="${v}">${v ? '+' + v + '× ATR' : 'off'}</button>`).join('')}</div>
         <label>Stop-loss</label><div class="chips" style="margin:0">${[1, 1.5, 2, 3].map((v) => `<button class="chip ${B.stopAtr === v ? 'on' : ''}" data-sl="${v}">${v}× ATR</button>`).join('')}</div>
         <label>Time limit</label><div class="chips" style="margin:0">${[0, 3, 5, 10, 20].map((v) => `<button class="chip ${B.maxDays === v ? 'on' : ''}" data-md="${v}">${v ? v + ' sessions' : 'off'}</button>`).join('')}</div>
@@ -357,6 +361,7 @@
     const gap = st.lastFetch ? (Date.now() - st.lastFetch) / 36e5 : 99;
     const mk = market();
     if (gap > 20 && !mk.open) add({ kind: 'warn', title: 'Time to catch up', body: `Last update was ${updatedAgo()}. Update so I can trade the sessions I missed and learn from them.`, act: ['update', 'Update now'] });
+    if (!B.beat) add({ kind: nRet != null && ret < nRet ? 'warn' : 'idea', title: nRet != null && ret < nRet ? `Behind the Nifty by ${(nRet - ret).toFixed(1)} pts – try Beat the Nifty` : 'Want to beat the Nifty?', body: `In tests on 9 two-year periods (2008–2026) my ${B.quick ? 'quick' : 'normal'} style beat the Nifty in only ${B.quick ? 'a few' : '3'} – switching in and out of stocks costs too much in rising markets. Beat the Nifty stays invested and only steps aside in a crash: it beat the Nifty in 6 of 9, by 7.6 pts on average.`, act: ['beat-on', 'Switch to Beat the Nifty'] });
     const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending);
     if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + `. They fill at 9:15 AM – in ${dur(mk.nextOpen - Date.now())}.`, pill: 'tomorrow' });
     if (nRet != null && days >= 15 && ret < nRet - 3) add({ kind: 'warn', title: `The Nifty is ahead of me by ${(nRet - ret).toFixed(1)} pts`, body: `Since ${fdate(st.paperStart)} I made ${pct(ret)} while a Nifty index fund made ${pct(nRet)}. Most active strategies trail the index over time. Holding part of the money in NIFTYBEES (a Nifty ETF) keeps you close to the market.`, pill: `−${(nRet - ret).toFixed(1)} pts`, neg: true, act: st.cfg.tickers.includes('NIFTYBEES.NS') ? null : ['add:NIFTYBEES.NS', 'Add NIFTYBEES'] });
@@ -405,6 +410,7 @@
     if (a === 'settings') { tab = 'settings'; render(); return window.scrollTo(0, 0); }
     if (a === 'wrapped') return openWrapped();
     if (a === 'import') return startImport();
+    if (a === 'beat-on') { setStyle('beat'); toast('Beat the Nifty on'); say(`Switched. ${styleText()}`); return render(); }
     if (a === 'quick-on' || a === 'quick-off') { setStyle(a === 'quick-on'); toast(a === 'quick-on' ? 'Quick trading on' : 'Normal trading on'); return render(); }
     if (a === 'train' || a === 'train-walk') { if (a === 'train-walk') Object.assign(train, { phase: 'setup', mode: 'repeat', route: 'walk', preset: '5y' }); tab = 'train'; render(); return window.scrollTo(0, 0); }
     if (a.startsWith('add:')) return addStock(a.slice(4));
@@ -474,6 +480,8 @@
       <div><div class="lbl">Avg days held</div><div><b>${Number.isNaN(S.avgDays) ? '–' : S.avgDays.toFixed(1)}</b></div></div>
       <div><div class="lbl">Targets hit</div><div><b>${S.targets}</b></div></div></div></div>`;
     h += paperCharts();
+    if (look) { if (!look.pc) snapChart(lookAsOf(), look); h += pastChartCard(lookAsOf(), true, look, 'l', 'Chart predictions on any of the last 250 days'); }
+    else h += `<div class="sec">Chart predictions</div><div class="card"><p class="empty">Update once to load the charts – then slide to any of the last 250 days and see what Moli would have read, and what really happened.</p><div class="actions"><button class="btn sm" data-act="update">Update now</button></div></div>`;
     const tally = {};
     list.filter((t) => t.x && t.pnl <= 0).forEach((t) => E.diagnose(t).forEach((g) => { tally[g] = (tally[g] || 0) + 1; }));
     const tl = Object.entries(tally).sort((a, b) => b[1] - a[1]);
@@ -771,16 +779,49 @@
     g += `<line x1="${X(n - 1).toFixed(1)}" x2="${X(n - 1).toFixed(1)}" y1="${padT}" y2="${H - padB}" stroke="${css('--line')}" stroke-width="1"/>`;
     if (actual && actual.length) g += `<path d="M${X(n - 1).toFixed(1)},${Y(C.c[n - 1]).toFixed(1)}${actual.map((v, k) => `L${X(n + k).toFixed(1)},${Y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--ink')}" stroke-width="2"/>` + actual.map((v, k) => `<circle cx="${X(n + k).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="1.8" fill="${css('--ink')}"/>`).join('');
     return `<svg class="chart" style="height:230px;overflow:hidden" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>
-      <div class="legend" style="flex-wrap:wrap;gap:6px 14px">${actual ? '<span><i style="background:var(--ink)"></i>what really happened</span>' : ''}<span><i style="background:var(--clay-d)"></i>20-day avg</span><span><i style="background:var(--slate)"></i>50-day avg</span><span><i style="background:var(--ochre)"></i>trend cone (2 weeks)</span><span>▲▼ candle patterns</span><span>– – support / resistance</span></div>`;
+      <div class="legend" style="flex-wrap:wrap;gap:6px 14px">${actual && actual.length ? '<span><i style="background:var(--ink)"></i>what really happened</span>' : ''}<span><i style="background:var(--clay-d)"></i>20-day avg</span><span><i style="background:var(--slate)"></i>50-day avg</span><span><i style="background:var(--ochre)"></i>trend cone (2 weeks)</span><span>▲▼ candle patterns</span><span>– – support / resistance</span></div>`;
   }
 
+  /** Volume bars (green up day / red down day), 20-day average volume and on-balance volume, aligned with the candles. */
+  function volChart(P) {
+    const C = P.chart; if (!C.v) return '';
+    const n = C.c.length, ahead = P.proj.ahead, W = 340, H = 70, padR = 34, slot = (W - padR) / (n + ahead), X = (i) => slot * (i + 0.5), cw = Math.max(1.5, slot * 0.62);
+    const vmax = Math.max(...C.v, 1), Yv = (v) => H - 2 - (v / vmax) * (H - 8);
+    let g = '';
+    for (let i = 0; i < n; i++) { const up = C.c[i] >= C.o[i]; g += `<rect x="${(X(i) - cw / 2).toFixed(1)}" y="${Yv(C.v[i]).toFixed(1)}" width="${cw.toFixed(1)}" height="${(H - 2 - Yv(C.v[i])).toFixed(1)}" fill="${up ? css('--sage') : css('--clay')}" opacity=".55"/>`; }
+    const avg = C.v.map((_, i) => (i >= 19 ? C.v.slice(i - 19, i + 1).reduce((a, b) => a + b, 0) / 20 : null));
+    let d = ''; avg.forEach((v, i) => { if (v != null) d += `${d ? 'L' : 'M'}${X(i).toFixed(1)},${Yv(v).toFixed(1)}`; });
+    g += `<path d="${d}" fill="none" stroke="${css('--muted')}" stroke-width="1" stroke-dasharray="3 2"/>`;
+    const o = C.obv, omin = Math.min(...o), omax = Math.max(...o), Yo = (v) => 4 + (1 - (v - omin) / ((omax - omin) || 1)) * (H - 10);
+    g += `<path d="${o.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Yo(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--slate')}" stroke-width="1.4"/>`;
+    return `<svg class="chart" style="height:76px;overflow:hidden;margin-top:2px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}</svg>
+      <div class="legend" style="flex-wrap:wrap;gap:6px 14px"><span><i style="background:var(--sage)"></i>volume (up day)</span><span><i style="background:var(--clay)"></i>(down day)</span><span>– – 20-day avg</span><span><i style="background:var(--slate)"></i>OBV (volume flow)</span></div>`;
+  }
+  const CALLW = { buy: 'Buy', hold: 'Hold', sell: 'Sell' };
+  const callPill = (k, sc) => `<span class="pill ${k === 'sell' ? 'neg' : ''}" style="${k === 'hold' ? 'background:var(--line);color:var(--muted)' : ''}">${CALLW[k]} · ${sc}/5</span>`;
+  /** The buy/hold/sell call: 5 indicator checks + how each call did on this stock before. */
+  function callCard(P) {
+    const K = P.call; if (!K) return '';
+    const r = K.rec, pp = (x) => (Number.isNaN(x.up) ? '–' : Math.round(x.up * 100) + '%');
+    const works = r.buy.n >= 20 && r.sell.n >= 20 && r.buy.avg > K.base.avg + 0.3 && r.sell.avg < K.base.avg - 0.3;
+    const backwards = r.buy.n >= 20 && r.sell.n >= 20 && r.buy.avg < r.sell.avg;
+    const col = { buy: 'var(--sage)', sell: 'var(--clay)', hold: 'var(--line)' };
+    return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><span class="lbl">Indicator call</span>${callPill(K.call, K.score)}</div>
+      <div style="display:flex;gap:1px;height:10px;border-radius:5px;overflow:hidden;margin:10px 0 2px">${K.hist.map((x) => `<i style="flex:1;background:${col[x >= 4 ? 'buy' : x <= 1 ? 'sell' : 'hold']}"></i>`).join('')}</div><div class="m" style="display:flex;justify-content:space-between;font-size:12px"><span>80 sessions ago</span><span>today</span></div>
+      <div style="margin-top:10px">${K.parts.map(([t, ok]) => `<div class="m" style="font-size:14px;color:var(--fg);margin:3px 0">${ok ? '✓' : '✗'} <span style="${ok ? '' : 'color:var(--muted)'}">${esc(t)}</span></div>`).join('')}</div>
+      <p class="m" style="margin:8px 0 0">4–5 checks = Buy, 2–3 = Hold, 0–1 = Sell.${K.volRatio != null ? ` Today's volume: ${K.volRatio.toFixed(1)}× its 20-day average${K.volRatio >= 1.5 ? ' – heavy' : K.volRatio < 0.8 ? ' – light' : ''}.` : ''} RSI ${Number.isNaN(K.rsi) ? '–' : Math.round(K.rsi)}.</p>
+      <div class="lbl" style="margin-top:12px">How the call did on this stock</div>
+      ${['buy', 'hold', 'sell'].map((k) => `<div class="row"><div><b>After a ${CALLW[k]} call</b><div class="m">${r[k].n} days</div></div><div class="r"><b class="${cls(r[k].avg)}">${Number.isNaN(r[k].avg) ? '–' : pct(r[k].avg, 1)}</b><div class="m">higher ${pp(r[k])} · 20 sessions later</div></div></div>`).join('')}
+      <p class="sub" style="margin-top:6px">A normal day: ${pct(K.base.avg, 1)} and higher ${pp(K.base)} of the time. ${works ? 'Here Buy calls were followed by better returns than Sell calls – the call has had some value on this stock.' : backwards ? 'Here it worked backwards: Sell calls were followed by better returns than Buy calls (the stock tended to bounce back). Don\'t follow it blindly.' : 'The calls made little difference on this stock.'}</p></div>`;
+  }
   function viewStock() {
     const T = st.tickers[curSym], P = T && T.pred;
     let h = pageHead(sym(curSym || ''), T ? `${px(T.lastClose)}${P ? ` · <span class="${cls(P.change)}">${pct(P.change, 2)}</span> on ${fdate(P.asOf)}` : ''}` : '', prevTab);
     if (!T) return h + '<p class="empty">Not in your list.</p>';
     if (!P) return h + `<div class="card"><p class="empty">Predictions appear after the next update.</p><div class="actions"><button class="btn sm" data-act="update">Update now</button></div></div>`;
     const o = P.outlook, mood = o.lean === 'up' ? 'happy' : o.lean === 'down' ? 'concerned' : 'thinking';
-    h += `<div class="card"><div class="lbl">Last ${P.chart.c.length} sessions + 2-week trend cone</div>${candleChart(P)}</div>`;
+    h += `<div class="card"><div class="lbl">Last ${P.chart.c.length} sessions + 2-week trend cone</div>${candleChart(P)}${volChart(P)}</div>`;
+    h += callCard(P);
     h += `<div class="says">${buddy(70, mood)}<div class="bub"><div class="adv"><div class="top" style="margin:0"><span class="lbl">Moli's read</span><span class="pill ${o.lean === 'down' ? 'neg' : ''}" style="${o.lean === 'none' ? 'background:var(--line);color:var(--muted)' : ''}">${esc(leanText(o))}</span></div></div>
       <h3>${o.lean === 'none' ? 'Today\'s signals don\'t tell me much' : `Similar setups rose ${Math.round(o.p5 * 100)}% of the time`}</h3>
       <p>${P.active.length ? `${P.active.length} signal${P.active.length > 1 ? 's' : ''} today. ` : 'No signals today. '}On ${sym(curSym)} a normal week ends higher ${Math.round(P.base.h5.up * 100)}% of the time${o.lean === 'none' ? '' : `; with today's signals it was ${Math.round(o.p5 * 100)}% (${o.edge > 0 ? '+' : ''}${o.edge.toFixed(1)} pts, from ${o.n} past cases)`}. Based on ${P.years} years of this stock's prices – a tilt in the odds, not a promise.</p></div></div>`;
@@ -1238,38 +1279,46 @@
     }
     return h + `</div>`;
   }
-  /** Candlestick chart + predictions as they looked on a past date of the run; reveals what happened next up to the replay date. */
-  function pastChartCard(asOf, done) {
-    if (!train.data) return '';
-    const syms = Object.keys(train.data), s = train.pcSym && train.data[train.pcSym] ? train.pcSym : syms[0];
-    const days = train.data[s].bars.d.filter((d) => d >= train.start && d <= asOf);
-    let h = `<div class="sec">Chart predictions${done ? '' : ' while it trades'}</div><div class="card"><div class="chips" style="margin:0 0 10px">${syms.map((x) => `<button class="chip ${x === s ? 'on' : ''}" data-tsym="${esc(x)}">${sym(x)}</button>`).join('')}</div>`;
+  /**
+   * Candlestick chart + predictions as they looked on a past date (training run or paper account);
+   * reveals what really happened next, up to `asOf`. X = { data, nifty, start, pcSym, pc }, scope 't' or 'l'.
+   */
+  function pastChartCard(asOf, done, X = train, scope = 't', title) {
+    if (!X || !X.data) return '';
+    const syms = Object.keys(X.data).filter((x) => X.data[x] && X.data[x].bars), s = X.pcSym && X.data[X.pcSym] ? X.pcSym : syms[0];
+    if (!s) return '';
+    const days = X.data[s].bars.d.filter((d) => d >= X.start && d <= asOf);
+    let h = `<div class="sec">${title || `Chart predictions${done ? '' : ' while it trades'}`}</div><div class="card"><div class="chips" style="margin:0 0 10px">${syms.map((x) => `<button class="chip ${x === s ? 'on' : ''}" data-csym="${esc(x)}" data-scope="${scope}">${sym(x)}</button>`).join('')}</div>`;
     if (!days.length) return h + '<p class="empty">Starts once the replay begins.</p></div>';
-    const pc = train.pc;
-    if (done) h += `<label>Date</label><input type="range" id="pc_date" min="0" max="${days.length - 1}" value="${pc && pc.sym === s ? Math.max(0, days.indexOf(pc.date)) : days.length - 1}" style="width:100%">`;
+    const pc = X.pc;
+    if (done) h += `<label>Date</label><input type="range" id="${scope}_pcdate" min="0" max="${days.length - 1}" value="${pc && pc.sym === s ? Math.max(0, days.indexOf(pc.date)) : days.length - 1}" style="width:100%">`;
     else h += `<div class="actions" style="margin-top:0"><button class="btn sm" id="pc_snap">Read the chart on ${fdate(asOf)}</button></div>`;
-    if (!pc || pc.sym !== s) return h + `<p class="m" style="margin:8px 0 0">${done ? 'Move the slider to any day of the run' : 'Tap to freeze the chart on the replay date'} – Moli reads it using only prices up to that day, then you see what really happened next.</p></div>`;
+    if (!pc || pc.sym !== s) return h + `<p class="m" style="margin:8px 0 0">${done ? 'Move the slider to any day' : 'Tap to freeze the chart on the replay date'} – Moli reads it using only prices up to that day, then you see what really happened next.</p></div>`;
     const P = pc.P;
     if (!P) return h + `<p class="empty">Not enough earlier prices on ${fdate(pc.date)}.</p></div>`;
-    const nx = E.closesAfter(train.data[s].bars, pc.date, asOf, P.proj.ahead), act = nx.map((x) => x.c), o = P.outlook, F = P.trend;
-    h += `<div class="lbl" style="margin-top:10px">${sym(s)} · ${fdate(pc.date)} · ${px(P.price)}</div>${candleChart(P, act)}`;
+    const nx = E.closesAfter(X.data[s].bars, pc.date, asOf, P.proj.ahead), act = nx.map((x) => x.c), o = P.outlook, F = P.trend, K = P.call;
+    h += `<div class="lbl" style="margin-top:10px">${sym(s)} · ${fdate(pc.date)} · ${px(P.price)}</div>${candleChart(P, act)}${volChart(P)}`;
+    if (K) h += `<div class="row"><div><b>Indicator call</b> ${callPill(K.call, K.score)}<div class="m">${K.parts.filter(([, ok]) => ok).map(([t]) => t).join(' · ') || 'no checks passed'}</div></div></div>`;
     h += `<div class="row"><div><b>Moli's read</b><div class="m">${esc(leanText(o))}${o.lean === 'none' ? '' : ` · ${Math.round(o.p5 * 100)}% of similar setups rose within a week`}${P.active.length ? ` · ${P.active.slice(0, 3).map((x) => x.label).join(', ')}` : ' · no signals'}</div></div></div>`;
     if (F) h += `<div class="row"><div><b>Trend</b> ${trendPill(F.now)}<div class="m">next 20 sessions: ${Math.round(F.pUp * 100)}% chance higher – ${callText(F)}</div></div></div>`;
     h += `<div class="row"><div><b>2-week cone</b><div class="m">about ${px(P.proj.end)} (likely ${px(P.proj.lo)}–${px(P.proj.hi)})</div></div></div>`;
-    if (!act.length) h += `<p class="m" style="margin:8px 0 0">What happened next shows up as the replay moves on.</p>`;
+    if (!act.length) h += `<p class="m" style="margin:8px 0 0">${done ? 'This is the latest day – what happens next shows up after future updates.' : 'What happened next shows up as the replay moves on.'}</p>`;
     else {
       const last = act[act.length - 1], ch = (last / P.price - 1) * 100, k = act.length, inCone = last >= P.proj.loPath[k] && last <= P.proj.hiPath[k];
-      const leanOk = o.lean === 'none' ? null : (o.lean === 'up') === (ch > 0);
+      const leanOk = o.lean === 'none' ? null : (o.lean === 'up') === (ch > 0), callOk = !K || K.call === 'hold' ? null : (K.call === 'buy') === (ch > 0);
       h += `<div class="lbl" style="margin-top:12px">What really happened · ${k} session${k > 1 ? 's' : ''} later</div>
-        <p class="sub" style="margin-top:4px"><b class="${cls(ch)}">${pct(ch)}</b> to ${px(last)}. ${inCone ? 'Inside the cone.' : last > P.proj.hiPath[k] ? 'Above the cone – a bigger rise than normal swings.' : 'Below the cone – a bigger fall than normal swings.'}${leanOk == null ? '' : leanOk ? ` The ${o.lean} lean was right.` : ` The ${o.lean} lean was wrong.`}${k < P.proj.ahead ? ' (still playing out)' : ''}</p>`;
+        <p class="sub" style="margin-top:4px"><b class="${cls(ch)}">${pct(ch)}</b> to ${px(last)}. ${inCone ? 'Inside the cone.' : last > P.proj.hiPath[k] ? 'Above the cone – a bigger rise than normal swings.' : 'Below the cone – a bigger fall than normal swings.'}${leanOk == null ? '' : leanOk ? ` The ${o.lean} lean was right.` : ` The ${o.lean} lean was wrong.`}${callOk == null ? '' : callOk ? ` The ${CALLW[K.call]} call was right.` : ` The ${CALLW[K.call]} call was wrong.`}${k < P.proj.ahead ? ' (still playing out)' : ''}</p>`;
     }
     return h + `<p class="m" style="margin:8px 0 0">Prices are adjusted for later splits and bonuses, so they can look lower than the prices quoted back then.</p></div>`;
   }
-  function snapChart(date) {
-    const s = train.pcSym; if (!train.data || !train.data[s]) return;
-    let P = null; try { P = E.predictAt(train.data[s].bars, train.nifty && train.nifty.bars, date); } catch (e) { P = null; }
-    train.pc = { sym: s, date, P };
+  function snapChart(date, X = train) {
+    const s = X.pcSym && X.data[X.pcSym] ? X.pcSym : Object.keys(X.data)[0]; if (!X.data || !X.data[s]) return;
+    let P = null; try { P = E.predictAt(X.data[s].bars, X.nifty && X.nifty.bars, date); } catch (e) { P = null; }
+    X.pc = { sym: s, date, P };
   }
+  // paper account: the last downloaded prices stay in memory so any of the last ~250 sessions can be re-read
+  let look = null;
+  const lookAsOf = () => (look && look.nifty ? look.nifty.bars.d[look.nifty.bars.d.length - 1] : null);
   function viewTrain() {
     const ph = train.phase;
     if (ph === 'repeating' || ph === 'repeatDone') return viewRepeat();
@@ -1335,8 +1384,8 @@
     h += `<p class="m" style="margin:12px 0 0">${fdate(a)} – ${fdate(b)} · about ${Math.round(((Date.parse(b) - Date.parse(a)) / 864e5) * 252 / 365)} sessions. Earliest: 2008 (Nifty data).</p></div>`;
     const nl = E.lessonsBefore(st, a).length;
     h += `<div class="sec">Trading style for this run</div><div class="card"><div class="chips" style="margin:0">
-        ${[['account', `Like my account (${isQuick() ? 'quick' : 'normal'})`], ['normal', 'Normal – ride trends'], ['quick', 'Quick – in and out']].map(([k, t]) => `<button class="chip ${train.style === k ? 'on' : ''}" data-style="${k}">${t}</button>`).join('')}</div>
-      <p class="m" style="margin:10px 0 0">${(train.style === 'quick' || (train.style === 'account' && isQuick())) ? 'Fast entries (sharp dips, pullbacks, volume breakouts) and fast exits: profit target, tight stop-loss and a time limit. Trades last days, not months.' : 'Trend strategies that hold for weeks or months.'}</p></div>`;
+        ${[['account', `Like my account (${STYLE_NAME[curStyle()].toLowerCase()})`], ['beat', 'Beat the Nifty'], ['normal', 'Normal – ride trends'], ['quick', 'Quick – in and out']].map(([k, t]) => `<button class="chip ${train.style === k ? 'on' : ''}" data-style="${k}">${t}</button>`).join('')}</div>
+      <p class="m" style="margin:10px 0 0">${(train.style === 'beat' || (train.style === 'account' && curStyle() === 'beat')) ? 'Stays invested in every stock and steps aside only when the Nifty falls well below its 200-day average.' : (train.style === 'quick' || (train.style === 'account' && isQuick())) ? 'Fast entries (sharp dips, pullbacks, volume breakouts) and fast exits: profit target, tight stop-loss and a time limit. Trades last days, not months.' : 'Trend strategies that hold for weeks or months.'}</p></div>`;
     h += `<div class="sec">Brain</div><div class="card">
       <label class="switch" style="margin:0"><input type="radio" name="tb" value="fresh" ${train.brain === 'fresh' ? 'checked' : ''}><span><b>Fresh brain</b> – learns only from this period</span></label>
       <label class="switch" style="margin:12px 0 0"><input type="radio" name="tb" value="lessons" ${train.brain === 'lessons' ? 'checked' : ''}><span><b>With earlier lessons</b> – ${nl} trades that ended before ${fdate(a)} (an honest test: no future knowledge)</span></label></div>`;
@@ -1389,10 +1438,9 @@
     const _t_skip = $('t_skip'); if (_t_skip) _t_skip.onpointerdown = pd(() => { E.stepDays(train.ctx, Infinity); trainDone(); });
     const _t_stop = $('t_stop'); if (_t_stop) _t_stop.onpointerdown = pd(() => { train.ctx.dates.length = train.ctx.pos; trainDone(); });
     on('t_teach', teachLive);
-    document.querySelectorAll('[data-tsym]').forEach((b) => { b.onpointerdown = pd(() => { train.pcSym = b.dataset.tsym; if (train.pc && (train.phase === 'done' || train.phase === 'repeatDone')) snapChart(train.pc.date); render(); }); });
+
     const snap = $('pc_snap'); if (snap) snap.onpointerdown = pd(() => { const eq = train.tst.equity, d = eq.length ? eq[eq.length - 1][0] : train.start; snapChart(d); render(); });
-    const rg = $('pc_date');
-    if (rg) rg.onchange = () => { const eq = train.tst ? train.tst.equity : [], upto = eq.length ? eq[eq.length - 1][0] : (train.rep ? train.rep.end : train.end); const days = train.data[train.pcSym].bars.d.filter((d) => d >= train.start && d <= upto); snapChart(days[+rg.value]); render(); };
+
     on('t_new', () => { train = { phase: 'setup', preset: train.preset, from: train.from, to: train.to, brain: train.brain, speed: train.speed, mode: train.mode, rounds: train.rounds, autoApply: train.autoApply, capital: train.capital, route: train.route, style: train.style }; render(); });
   }
 
@@ -1400,20 +1448,23 @@
   // ---------------------------------------------------------------- trading style (normal / quick)
   const isQuick = () => !!E.brainParams(st).quick;
   /** Brain settings for a style: 'account' = what the live brain uses now. */
+  const curStyle = () => { const B = E.brainParams(st); return B.quick ? 'quick' : B.beat ? 'beat' : 'normal'; };
+  const PRESET = (k) => (k === 'quick' ? E.QUICK_PRESET : k === 'beat' ? E.BEAT_PRESET : E.NORMAL_PRESET);
+  const STYLE_NAME = { normal: 'Normal trading', quick: 'Quick trading', beat: 'Beat the Nifty' };
   function styleParams(style) {
-    const B = E.brainParams(st);
-    if (style === 'quick') return B.quick ? B : { ...B, ...E.QUICK_PRESET, strategies: null };
-    if (style === 'normal') return B.quick ? { ...B, ...E.NORMAL_PRESET, strategies: null } : B;
-    return B;
+    const B = E.brainParams(st), k = style === 'account' ? curStyle() : style;
+    return k === curStyle() ? B : { ...B, ...PRESET(k), strategies: null };
   }
-  function setStyle(quick, extra) {
-    const B = E.brainParams(st);
-    const next = quick ? { ...B, ...(B.quick ? {} : { ...E.QUICK_PRESET, strategies: null }), ...(extra || {}) } : { ...B, ...E.NORMAL_PRESET, strategies: null, ...(extra || {}) };
+  function setStyle(style, extra) {
+    const B = E.brainParams(st), k = style === true ? 'quick' : style === false ? 'normal' : style;
+    const next = { ...B, ...(k === curStyle() && k !== 'normal' ? {} : { ...PRESET(k), strategies: null }), ...(extra || {}) };
     const ch = E.applyParams(st, next, todayIST(), nowIso()); store.save(st);
     return ch;
   }
+  const BEAT_TEST = 'In tests on 9 two-year periods from 2008 to 2026 with 8 big stocks it beat the Nifty in 6 of them, by 7.6 points on average – but it trailed the Nifty in 2012–13 and 2023–26, and fell up to 36% in 2008. Simply holding the same 8 stocks did a bit better on average (+9.7) but fell 55% in 2008. Which stocks you pick matters most – and those 8 are today\'s winners, which flatters every test.';
   const styleText = () => {
     const B = E.brainParams(st);
+    if (B.beat) return `**Beat the Nifty**: I stay invested in each of your stocks (buying trends already under way) and only step aside when the Nifty falls ${B.crashGap >= 100 ? '– never, crash filter off' : `${B.crashGap}% below its 200-day average, buying back once it's above the average again`}. No stop-losses and no strategy switching – in tests, switching in and out is what made me lag the Nifty. ${BEAT_TEST.replace(/\\'/g, "'")}`;
     return B.quick ? `**Quick trading**: short swings with ${E.QUICK.map((k) => E.STRATEGIES[k].label).join(', ')}. Profit target ${B.tpAtr ? '+' + B.tpAtr + '× ATR' : 'off'}, stop-loss ${B.stopAtr ? B.stopAtr + '× ATR' : 'off'}, time limit ${B.maxDays ? B.maxDays + ' sessions' : 'off'}.`
       : `**Normal trading**: ride trends for weeks or months with ${E.NORMAL.map((k) => E.STRATEGIES[k].label).join(', ')}. Stop-loss ${B.stopAtr ? B.stopAtr + '× ATR' : 'off'}.`;
   };
@@ -1501,7 +1552,7 @@
     const S2 = E.stats(train.trades);
     const TM = train.tst.learning.mistakes || [], tmNew = TM.filter((m) => !m.inherited), tmBlocked = TM.reduce((a, m) => a + (m.blocked || 0), 0);
     sum.mistakes = tmNew.length; sum.skipped = tmBlocked;
-    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}, ${E.brainParams(train.tst).quick ? 'quick' : 'normal'} trading) is done. I noted ${tmNew.length} mistake${tmNew.length === 1 ? '' : 's'} along the way and skipped repeating them ${tmBlocked}×. Trades lasted ${Number.isNaN(S2.avgDays) ? '–' : S2.avgDays.toFixed(1)} sessions on average${S2.targets ? `, ${S2.targets} hit the profit target` : ''}. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
+    return `Training on **${sum.label}** (${fdate(sum.start)} – ${fdate(sum.end)}, ${E.brainParams(train.tst).quick ? 'quick trading' : E.brainParams(train.tst).beat ? 'Beat the Nifty' : 'normal trading'}) is done. I noted ${tmNew.length} mistake${tmNew.length === 1 ? '' : 's'} along the way and skipped repeating them ${tmBlocked}×. Trades lasted ${Number.isNaN(S2.avgDays) ? '–' : S2.avgDays.toFixed(1)} sessions on average${S2.targets ? `, ${S2.targets} hit the profit target` : ''}. Starting with ${inr(sum.capital)}, I ended with **${inr(sum.capital * (1 + sum.ret / 100))}** – **${pct(sum.ret)}** with a worst drop of ${pct(sum.dd)}; the Nifty did ${pct(sum.nret)}. ${sum.trades} trades, ${Number.isNaN(sum.win) ? '–' : Math.round(sum.win * 100) + '%'} winners.` +
       (sum.trend ? `\n\nTrend calls: I called each stock's next 20 sessions ${sum.trend.n}× using only what I knew then – right ${Math.round(sum.trend.acc * 100)}% vs ${Math.round(sum.trend.base * 100)}% for always guessing${sum.trend.acc - sum.trend.base >= 0.04 ? '.' : ', so not much of an edge.'}` : '') +
       (top.length ? `\n\nMy most common mistakes:\n${top.map(([g, n]) => `- ${g} (${n}×)`).join('\n')}` : '') +
       `\n\n${ch.length ? `Say **apply** and I'll use what I learned: add these ${P.added} trades to my evidence and ${ch.join(', ')}.` : `Say **apply** and I'll add these ${P.added} trades to my evidence. None of my rules would change.`} Remember: a good result on the past can be luck.`;
@@ -1562,6 +1613,10 @@
       const n = Object.values(st.tickers).filter((t) => t.live.qty).length;
       return say(`Stopped. ${n ? `I'll sell all ${n} position${n > 1 ? 's' : ''} at the next open` : 'I hold nothing'} and won't buy until you say **resume**.`);
     }
+    if (/\b(beat|outperform|out perform|better than)\b.*\b(nifty|index|market)\b|\bbeat mode\b|\bstay invested\b/.test(l) && !/\btrain\b/.test(l)) {
+      const ch = setStyle('beat');
+      return say(`${ch.length ? 'Done – switched to ' : 'Already on '}${styleText()}\n\nSay **normal mode** or **quick mode** to go back.`);
+    }
     if (/\b(quick|fast|short[- ]term|swing|scalp|in and out)\b/.test(l) && !/\btrain|practi[cs]e\b/.test(l) || /\b(normal|long[- ]term|slow)\s*(mode|trading|style)?\b/.test(l) && /\b(mode|trading|style|switch|go|use)\b/.test(l) && !/\btrain\b/.test(l)) {
       const quick = /\b(quick|fast|short[- ]term|swing|scalp|in and out)\b/.test(l) && !/\b(stop|turn off|disable|no more)\b.*\bquick/.test(l);
       const ch = setStyle(quick);
@@ -1576,7 +1631,7 @@
       return say(`Time limit set to ${v} sessions. ${styleText()}`);
     }
     if (/\b(stop[- ]?loss)\b/.test(l) && /\d/.test(l)) {
-      const v = parseFloat(l.match(/(\d+(?:\.\d+)?)/)[1]); setStyle(isQuick(), { stopAtr: Math.min(Math.max(v, 0), 10) });
+      const v = parseFloat(l.match(/(\d+(?:\.\d+)?)/)[1]); setStyle(curStyle(), { stopAtr: Math.min(Math.max(v, 0), 10) });
       return say(`Stop-loss set to ${v}× ATR. ${styleText()}`);
     }
     if (/\b(style|mode)\b/.test(l) && /\b(what|which|my|current)\b/.test(l)) return say(styleText());
@@ -1772,7 +1827,26 @@
     toast(gone ? `${sym(s)} removed` : `${sym(s)} will be sold at the next open, then removed`);
   }
 
+  function bindLook() {
+    document.querySelectorAll('[data-csym]').forEach((b) => { b.onpointerdown = pd(() => {
+      const t = b.dataset.scope === 't', X = t ? train : look; if (!X) return;
+      X.pcSym = b.dataset.csym;
+      if (X.pc && (!t || train.phase === 'done' || train.phase === 'repeatDone')) snapChart(X.pc.date, X);
+      if (!t && !X.pc) snapChart(lookAsOf(), X);
+      render();
+    }); });
+    for (const sc of ['t', 'l']) {
+      const rg = $(`${sc}_pcdate`); if (!rg) continue;
+      rg.onchange = () => {
+        const X = sc === 't' ? train : look, eq = train.tst ? train.tst.equity : [];
+        const upto = sc === 'l' ? lookAsOf() : eq.length ? eq[eq.length - 1][0] : (train.rep ? train.rep.end : train.end);
+        const s0 = X.pcSym && X.data[X.pcSym] ? X.pcSym : Object.keys(X.data)[0];
+        const days = X.data[s0].bars.d.filter((d) => d >= X.start && d <= upto); snapChart(days[+rg.value], X); render();
+      };
+    }
+  }
   function bind() {
+    bindLook();
     const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
     on('pause', () => { E.setPause(st, 'pause', todayIST(), nowIso()); store.save(st); render(); toast('Paused: no new buys'); });
     on('stopall', () => { if (!confirm('Sell every position at the next open and stop buying?')) return; E.setPause(st, 'stop', todayIST(), nowIso()); store.save(st); render(); toast('Stopped: positions sell at the next open'); });
@@ -1789,7 +1863,8 @@
       if (!setupPicks.size) return toast('Pick at least one stock');
       const cfg = { tickers: [...setupPicks], capital: num('s_c', 500000) || 500000, warmYears: Math.min(Math.round(num('s_w', 2)), 8),
         stopAtr: num('s_s', 3), riskPct: num('s_r', 0), slippage: 0.05 };
-      st = E.newState(cfg, todayIST()); st.chat = [];
+      st = E.newState(cfg, todayIST()); st.chat = []; st.beatOffered = true;
+      st.cfg.brain = { ...E.BEAT_PRESET }; st.cfg.stopAtr = 0; // default style: Beat the Nifty (best in tests)
       const nm = ($('s_name') || {}).value; if (nm && nm.trim()) st.cfg.name = nm.trim().slice(0, 30);
       say(`Hi – I'm Moli. I'll paper trade your ${cfg.tickers.length} stocks with ${inr(cfg.capital)} of pretend money and learn from my mistakes.\n\nFirst I'm practising on the last ${cfg.warmYears} years so I don't start from zero. This takes a few seconds.`);
       store.save(st); tab = 'home'; query = ''; render(); update();
@@ -1799,7 +1874,8 @@
       const a = parseAmount($('m_amt').value); if (!a) return toast('Type an amount, e.g. 50000 or 1 lakh');
       const msg = changeMoney(mode, a); toast(msg.replace(/\*\*/g, '').split('. ')[0]); render();
     };
-    document.querySelectorAll('[data-tstyle]').forEach((b) => { b.onclick = () => { const ch = setStyle(b.dataset.tstyle === 'quick'); toast(ch.length ? (b.dataset.tstyle === 'quick' ? 'Quick trading on' : 'Normal trading on') : 'No change'); render(); }; });
+    document.querySelectorAll('[data-tstyle]').forEach((b) => { b.onclick = () => { const ch = setStyle(b.dataset.tstyle); toast(ch.length ? `${STYLE_NAME[b.dataset.tstyle]} on` : 'No change'); render(); }; });
+    document.querySelectorAll('[data-cg]').forEach((b) => { b.onclick = () => { setStyle('beat', { crashGap: +b.dataset.cg }); render(); }; });
     document.querySelectorAll('[data-tp]').forEach((b) => { b.onclick = () => { setStyle(true, { tpAtr: +b.dataset.tp }); render(); }; });
     document.querySelectorAll('[data-sl]').forEach((b) => { b.onclick = () => { setStyle(true, { stopAtr: +b.dataset.sl }); render(); }; });
     document.querySelectorAll('[data-md]').forEach((b) => { b.onclick = () => { setStyle(true, { maxDays: +b.dataset.md }); render(); }; });
@@ -1836,6 +1912,13 @@
   $('composer').onsubmit = (e) => { e.preventDefault(); send($('msg').value); };
   $('msg').addEventListener('input', autosize);
   $('msg').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('msg').value); } });
+  // one-time switch for existing accounts: the user asked for a style that aims to beat the Nifty
+  if (st && st.lastDate && !st.beatOffered) {
+    st.beatOffered = true;
+    const was = STYLE_NAME[curStyle()];
+    if (curStyle() !== 'beat') { setStyle('beat'); say(`I've switched from ${was.toLowerCase()} to **Beat the Nifty**. ${styleText()}\n\nSay **normal mode** or **quick mode** to switch back.`); }
+    store.save(st);
+  }
   render();
   if (st && (!st.lastFetch || Date.now() - st.lastFetch > 3600e3)) update();
   setInterval(tickCountdowns, 1000);
