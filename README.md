@@ -4,6 +4,8 @@ A minimalist, animated Android app that tracks what you earn and spend and tells
 
 **Install:** download [`Moli.apk`](Moli.apk) on your phone, open it, and allow "install unknown apps" when asked.
 
+[`Moli-autolog.apk`](Moli-autolog.apk) adds auto-logging from payment notifications. Play Protect blocks this one in some countries (e.g. India) because sideloaded apps that read notifications are restricted there; use `Moli.apk` if it won't install.
+
 | Home | Guide | Wrapped | Moli's note |
 |---|---|---|---|
 | ![](docs/home.png) | ![](docs/guide.png) | ![](docs/wrapped1.png) | ![](docs/wrapped_end.png) |
@@ -29,6 +31,6 @@ A minimalist, animated Android app that tracks what you earn and spend and tells
 - Everything is stored only on the phone. No account, no internet permission.
 
 ## Build
-JDK 17+ and Android SDK 35: `./gradlew assembleRelease` → `app/build/outputs/apk/release/app-release.apk`.
+JDK 17+ and Android SDK 35: `./gradlew assembleLiteRelease` (or `assembleFullRelease` for auto-logging) → `app/build/outputs/apk/<flavor>/release/`.
 Or run the **Build APK** GitHub Action and download the artifact.
 Screenshot tests (Robolectric + Roborazzi): `./gradlew testDebugUnitTest` → `app/screenshots/`.

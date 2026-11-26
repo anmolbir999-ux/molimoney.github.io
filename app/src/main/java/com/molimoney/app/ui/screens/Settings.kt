@@ -136,7 +136,7 @@ fun SettingsScreen(store: Store, onBack: () -> Unit, onImport: () -> Unit = {}, 
                 }
             }
         }
-        Reveal(4) {
+        if (com.molimoney.app.BuildConfig.AUTO_LOG) Reveal(4) {
             MCard {
                 ToggleRow("Auto-log payments", "Reads payment alerts from bank, card and UPI apps and logs them for you. Chats and email are ignored.",
                     s.autoTrack && listening) { on ->

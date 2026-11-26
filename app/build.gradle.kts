@@ -16,6 +16,20 @@ android {
         versionName = "1.1"
     }
 
+    flavorDimensions += "edition"
+    productFlavors {
+        // Everything, including auto-logging from payment notifications.
+        create("full") {
+            dimension = "edition"
+            buildConfigField("boolean", "AUTO_LOG", "true")
+        }
+        // No notification listener: installs on phones where Play Protect blocks sideloaded apps that read notifications.
+        create("lite") {
+            dimension = "edition"
+            buildConfigField("boolean", "AUTO_LOG", "false")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -30,7 +44,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {

@@ -144,7 +144,7 @@ fun HomeScreen(
         }
 
         // Ask to auto-log payments
-        val showSetup = !store.settings.hideSetupCard && !(store.settings.autoTrack && listening)
+        val showSetup = com.molimoney.app.BuildConfig.AUTO_LOG && !store.settings.hideSetupCard && !(store.settings.autoTrack && listening)
         if (showSetup) Reveal(1) {
             MCard {
                 Row(verticalAlignment = Alignment.Top) {
