@@ -25,6 +25,7 @@ pip install statsmodels kiteconnect      # optional: cointegration test, live tr
 | **3 – Stat-arb / pairs** | `pairs.py` | Rolling-hedge-ratio z-score pairs trade + cointegration test |
 | **3 / 3B – Factor investing** | `factor_portfolio.py` | Monthly momentum / low-volatility / combo portfolio vs Nifty |
 | **3 – Research process** | `backtest.py` | Backtest → out-of-sample split → parameter optimisation that shows overfitting |
+| **3B – Portfolio & risk** | `portfolio_risk.py` | Equal / 60-40 / inverse-vol / risk-parity / min-variance on Indian ETFs; correlations, risk contributions, VaR/CVaR in ₹, beta hedge |
 | **3B – Risk management** | `engine.py`, `metrics.py` | ATR stop-loss, risk-per-trade position sizing, market-regime filter; Sharpe, Sortino, Calmar, VaR, drawdown, profit factor |
 | **3B – Execution algos** | `live_kite.py` | TWAP, VWAP (volume-curve) and iceberg order slicing |
 | **4 – First algorithm** | `backtest.py` (default) | 50/200 SMA crossover, 15 years, with brokerage/STT/stamp/GST/DP costs & slippage, vs buy-and-hold & Nifty, with buy/sell chart |

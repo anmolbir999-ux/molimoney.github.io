@@ -70,4 +70,20 @@ def closes(tickers: list[str], start, end=None) -> pd.DataFrame:
     c = df["Close"] if isinstance(df.columns, pd.MultiIndex) else df[["Close"]]
     if not isinstance(df.columns, pd.MultiIndex):
         c.columns = tickers[:1]
-    return c.dropna(how="all", axis=1).dropna(how="all")
+    return clean_glitches(c.dropna(how="all", axis=1).dropna(how="all"))
+
+
+def clean_glitches(px: pd.DataFrame, max_move: float = 0.45) -> pd.DataFrame:
+    """Free data sometimes has bad prints (e.g. a -90% day that reverses the next session,
+    or an unadjusted split). Treat any daily move beyond ±max_move as 0% and rebuild prices."""
+    r = px.pct_change()
+    bad = r.abs() > max_move
+    if not bad.any().any():
+        return px
+    r = r.mask(bad, 0.0)
+    first = px.apply(lambda s: s.first_valid_index())
+    out = (1 + r.fillna(0)).cumprod()
+    for col in px.columns:
+        out[col] = out[col] / out.at[first[col], col] * px.at[first[col], col]
+        out.loc[px[col].isna(), col] = float("nan")
+    return out
