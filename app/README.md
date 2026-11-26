@@ -1,8 +1,13 @@
-# Moli Trader – Android paper-trading app
+# Moli – a paper trader you talk to (Android)
 
 Runs the trading algorithm on your phone: paper trades Nifty stocks with live prices and learns from its mistakes. No real money, no broker.
 
-**Install:** download [`PaperTrader.apk`](PaperTrader.apk) (installs as "Moli Trader") on the phone → open it → allow "install unknown apps".
+**Install:** download [`PaperTrader.apk`](PaperTrader.apk) (installs as "Moli") on the phone → open it → allow "install unknown apps".
+
+## How it looks and feels
+The main screen is a conversation. After every update Moli writes a short briefing (trades, what it learned, account vs Nifty, orders for the next open). You type questions or orders in plain words – *how am I doing?*, *positions*, *why SBIN?*, *what have you learned?*, *mistakes*, *pause*, *resume*, *stop and sell all*, *add AXISBANK*, *remove ITC*, *train on the 2008 crisis* / *train 2015 to 2018* / *train last 5 years with lessons*, *teach*, *when does the market open?*, *download trades*. Everything else (portfolio, stocks, training replay, brain, journal, data & settings) is in the side menu.
+
+Design: warm off-white (warm dark in dark mode, following the phone), serif type for Moli's voice, a single terracotta accent, hairline dividers instead of cards.
 
 ## How it works
 - **Data:** free daily prices from Yahoo Finance (`query1.finance.yahoo.com`), fetched when you open the app or tap Update. Missed days are caught up one session at a time.
@@ -19,7 +24,6 @@ Runs the trading algorithm on your phone: paper trades Nifty stocks with live pr
 - **Download data** (More tab): trades, daily equity, brain log, update history (CSV) and a full JSON backup, saved to `Downloads/Moli/` with the export time in each file name and timestamps inside.
 - **Storage:** everything stays on the phone (`files/state.json`).
 - **Reminder:** optional weekday 4:15 PM notification.
-- **Look:** Moli navy theme (from the Moli page in this repo) with bottom navigation.
 
 The engine mirrors `algo/engine.py`; on the same data it matches the Python backtester's results.
 

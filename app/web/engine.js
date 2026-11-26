@@ -235,6 +235,7 @@
     st.runs = st.runs || [];
     st.archive = st.archive || [];
     st.trainings = st.trainings || [];
+    st.chat = st.chat || [];
     st.learning.trained = st.learning.trained || [];
     st.equity.forEach((r) => { if (r.length < 4) r[3] = st.invested - st.withdrawn; });
     st.v = 2;
@@ -387,7 +388,7 @@
       if (isNew && st.lastDate) preRoll(st, sym, prep[sym], data[sym]);
     }
     const dates = [...new Set(Object.values(prep).flatMap((p) => p.raw.d))].sort()
-      .filter((d) => st.lastDate === null || d > st.lastDate);
+      .filter((d) => (st.lastDate === null || d > st.lastDate) && (!st.training || d <= st.training.end));
     const before = { trades: liveTradeCount(st), events: st.learning.events.length };
     return { st, data, nl, prep, dates, pos: 0, before, nowMs };
   }
