@@ -107,6 +107,25 @@ public class Bridge implements Runnable {
         }
     }
 
+    /** Post an alert notification now (e.g. "Momentum rebalance at tomorrow's open"). */
+    @JavascriptInterface
+    public void notify(String title, String text) {
+        android.app.NotificationManager nm = (android.app.NotificationManager) activity.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        android.app.Notification.Builder b;
+        if (Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(new android.app.NotificationChannel("alerts", "Trade alerts", android.app.NotificationManager.IMPORTANCE_DEFAULT));
+            b = new android.app.Notification.Builder(activity, "alerts");
+        } else {
+            b = new android.app.Notification.Builder(activity);
+        }
+        android.content.Intent open = new android.content.Intent(activity, MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+        android.app.PendingIntent pi = android.app.PendingIntent.getActivity(activity, 2, open, android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+        b.setSmallIcon(R.drawable.ic_stat).setContentTitle(title).setContentText(text)
+                .setStyle(new android.app.Notification.BigTextStyle().bigText(text)).setContentIntent(pi).setAutoCancel(true);
+        nm.notify(2, b.build());
+    }
+
     @JavascriptInterface
     public boolean canRemind() {
         return true;

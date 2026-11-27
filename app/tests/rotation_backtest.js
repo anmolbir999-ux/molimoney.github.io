@@ -3,7 +3,8 @@
  *   node app/tests/rotation_backtest.js <data-dir> [download]
  * With "download" it first saves Yahoo daily prices (2008–today) for the test universe – today's Nifty 50
  * plus former members, including stocks that later collapsed – and NIFTYBEES (the Nifty with dividends).
- * Settings were chosen on 2010–2019 only; 2020–today is the holdout. Results are after costs and tax.
+ * Only stocks in the Nifty 50 on each date can be picked (membership history in engine.js). Settings were chosen on
+ * 2010–2019 only; 2020–today is the holdout. Results are after costs, slippage and tax. Result: it did NOT beat the index.
  */
 const E = require('../web/engine.js'), fs = require('fs'), path = require('path');
 const dir = process.argv[2] || 'rotation-data';

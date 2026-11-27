@@ -79,6 +79,13 @@
     if (weekday && mins >= openM && mins < closeM) return { open: true, closeAt: at(n, 15, 30), nextOpen: nextOpen(n, mins, openM) };
     return { open: false, nextOpen: nextOpen(n, mins, openM) };
   }
+  /** When an order placed at the last close fills: the open of the first session after st.lastDate. */
+  function fillWhen() {
+    const n = ist(), day = n.getUTCDay(), mins = n.getUTCHours() * 60 + n.getUTCMinutes(), wk = day >= 1 && day <= 5;
+    if (wk && mins >= 9 * 60 + 15 && st.lastDate && st.lastDate < todayIST()) return `at today's 9:15 AM open – you'll see it after today's update (after 3:45 PM)`;
+    const mk = market(), d = mk.nextOpen ? new Date(mk.nextOpen + IST) : null;
+    return d ? `at ${d.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'UTC' })}'s 9:15 AM open (in ${dur(mk.nextOpen - Date.now())}) – update after 3:45 PM that day to see it` : 'at the next open';
+  }
   function nextOpen(n, mins, openM) {
     for (let k = 0; k < 8; k++) {
       const d = new Date(n.getTime() + k * 864e5), wd = d.getUTCDay();
@@ -130,7 +137,7 @@
   }
 
   // ---------------------------------------------------------------- Momentum rotation account (Nifty 50, monthly)
-  const ROT_TEST = { dev: [13.3, 9.4], hold: [10.3, 12.3], all: [12.2, 10.6], dd: -29 };
+  const ROT_TEST = { dev: [9.5, 9.4], hold: [7.8, 12.3], all: [8.6, 10.6], dd: -32, ew: [11.5, 8.1, 16.5] };
   let rotCache = null; // { at, data } – Nifty 50 prices kept in memory so a second update the same hour doesn't re-download
   async function updateRot(userData, nifty) {
     const first = !st.rot, syms = E.NIFTY50, rdata = {};
@@ -153,24 +160,143 @@
       const P = E.newRot(st.invested || st.cfg.capital, st.rotCfg || {}); E.rotRun(P, rdata, nifty, last, ps);
       st.rotSim = { start: ps, end: last, equity: P.equity.filter((_, i) => i % 2 === 0 || i === P.equity.length - 1), trades: P.trades.slice(-60), tax: P.tax.paid, costs: Math.round(P.costs) };
       st.rot = E.newRot(st.invested || st.cfg.capital, st.rotCfg || {}); st.rot.start = last;
-      say(`I've started a second paper account: **Momentum rotation**. Every month it holds the 10 Nifty 50 stocks that rose most over the past year (skipping the last month), weighted so calmer stocks get more, and steps aside when the Nifty falls 5% below its 200-day average. Practising on the last 3 years it would have made **${pct((P.equity[P.equity.length - 1][1] / P.equity[0][1] - 1) * 100)}** after costs and tax vs the Nifty's ${pct((P.equity[P.equity.length - 1][2] / P.equity[0][2] - 1) * 100)}.\n\nHonest test (2010–2026, including stocks that later collapsed): +${ROT_TEST.all[0]}%/yr vs +${ROT_TEST.all[1]}%/yr for the Nifty with dividends – but it trailed the Nifty in 2018–19 and 2024–26. Open it from Home.`, 'pnl');
+      say(`I've started a second paper account: **Momentum rotation**. Every month it holds the 10 Nifty 50 stocks that rose most over the past year (skipping the last month), weighted so calmer stocks get more, and steps aside when the Nifty falls 5% below its 200-day average. Practising on the last 3 years it would have made **${pct((P.equity[P.equity.length - 1][1] / P.equity[0][1] - 1) * 100)}** after costs and tax vs the Nifty's ${pct((P.equity[P.equity.length - 1][2] / P.equity[0][2] - 1) * 100)}.\n\nHonest test with real Nifty 50 membership, 2010–2026: +${ROT_TEST.all[0]}%/yr vs +${ROT_TEST.all[1]}%/yr for the Nifty with dividends – **it did not beat the index**. I'm running it as a live experiment next to an index fund so you can see for yourself. Open it from Home.`, 'pnl');
     }
     const before = st.rot.trades.length, logBefore = st.rot.log.length;
     E.rotRun(st.rot, rdata, nifty, last);
     const nt = st.rot.trades.slice(before), nl = st.rot.log.slice(logBefore);
     if (nt.length || nl.length) say(`**Momentum account:** ${nl.map((x) => x.t).join('. ')}${nl.length && nt.length ? '. ' : ''}${nt.length ? `${nt.filter((t) => t.side === 'BUY').length} buys, ${nt.filter((t) => t.side === 'SELL').length} sells – ${nt.slice(0, 6).map((t) => `${t.side === 'BUY' ? 'bought' : 'sold'} ${sym(t.sym)}`).join(', ')}${nt.length > 6 ? '…' : ''}.` : ''}`, 'pnl');
     rotLook = { data: rdata, nifty };
+    const al = rebalanceAlert();
+    if (al && st.alertKey !== al.key) {
+      st.alertKey = al.key;
+      say(`**Momentum rebalance at the next open (9:15 AM):** ${al.text}.${st.rot.expo === 0 ? ' The crash filter is on.' : ''}`, 'pnl');
+      try { if (N && N.notify) N.notify('Momentum rebalance at the next open', al.text.charAt(0).toUpperCase() + al.text.slice(1)); } catch (e) { /* no notifications */ }
+    }
   }
   let rotLook = null;
+  // ---------------------------------------------------------------- benchmarks: an index fund (and a momentum ETF)
+  // NIFTYBEES = the Nifty with dividends, minus a tiny fee; MOMENTUM = a Nifty 200 Momentum 30 ETF (from Aug 2022).
+  // The whole series is replaced at each update (adjusted closes get rebased at every dividend).
+  const BENCH = { niftybees: ['NIFTYBEES.NS', 'Index fund (NIFTYBEES)'], momentum: ['MOMENTUM.NS', 'Momentum ETF'] };
+  async function updateBench() {
+    const from = [st.paperStart, st.rot && st.rot.start, st.rotSim && st.rotSim.start].filter(Boolean).sort()[0];
+    const yrs = (Date.now() - Date.parse(from)) / 3.156e10, r = yrs > 4.5 ? '10y' : '5y';
+    st.bench = st.bench || {};
+    for (const k in BENCH) {
+      if (cancel) throw new Error('stopped');
+      progress(0, 1, `Downloading ${BENCH[k][1]}`);
+      try { const b = E.parseYahoo(await httpGet(url(BENCH[k][0], r))).bars; st.bench[k] = b.d.map((d, i) => [d, Math.round(b.ac[i] * 1000) / 1000]).filter((x) => x[0] >= from); } catch (e) { /* keep the old copy */ }
+    }
+  }
+  /** A benchmark as [date, value] rows starting at `from` (value = ₹ of `start` invested on that day). */
+  function benchRows(k, from, start = 100) {
+    const s0 = st.bench && st.bench[k]; if (!s0 || !s0.length) return null;
+    const rows = s0.filter((x) => x[0] >= from); if (rows.length < 2) return null;
+    return rows.map(([d, v]) => [d, (v / rows[0][1]) * start]);
+  }
+  /** 50/50 index fund + momentum ETF, rebalanced each month. */
+  function mixRows(from) {
+    const a = benchRows('niftybees', from), b = benchRows('momentum', from); if (!a || !b) return null;
+    const mb = new Map(b.map((r) => [r[0], r[1]])); let v = 100, pa = null, pb = null, mo = null, wa = 0.5, wb = 0.5; const out = [];
+    for (const [d, x] of a) { const y = mb.get(d); if (y == null) continue; if (pa != null) { const ra = x / pa, rb = y / pb, nv = v * (wa * ra + wb * rb); wa = (wa * ra * v) / nv; wb = 1 - wa; v = nv; }
+      if (d.slice(0, 7) !== mo) { wa = 0.5; wb = 0.5; mo = d.slice(0, 7); } pa = x; pb = y; out.push([d, v]); }
+    return out.length > 1 ? out : null;
+  }
+  const retOf = (rows) => (rows && rows.length > 1 ? (rows[rows.length - 1][1] / rows[0][1] - 1) * 100 : null);
+  /** Scorecard: an account vs the index fund (and the 50/50 ETF mix) over the account's own life. */
+  function scoreRows(label, eqRows, from) {
+    const idx = benchRows('niftybees', from), mix = mixRows(from), months = (Date.now() - Date.parse(from)) / 2.63e9;
+    const ret = label === 'paper' ? (returnIndex(st.equity).slice(-1)[0] || 100) - 100 : retOf(eqRows);
+    return { ret, idx: retOf(idx), mix: retOf(mix), months, from };
+  }
+  function scoreVerdict(sc) {
+    if (sc.idx == null || sc.ret == null) return 'The index fund comparison appears after the next update.';
+    if (sc.months < 6) return `Too early to judge – ${Math.max(1, Math.round(sc.months))} month${sc.months >= 1.5 ? 's' : ''} in. Give it 6–12 months without changing the rules: changing rules midway is how tests lie.`;
+    const gap = sc.ret - sc.idx;
+    return gap > 0 ? `Ahead of the index fund by ${gap.toFixed(1)} pts after ${Math.round(sc.months)} months. Keep going – a year is the minimum before trusting it.` : `Behind the index fund by ${(-gap).toFixed(1)} pts after ${Math.round(sc.months)} months. If that's still true at 12 months, the honest answer is: buy the index fund.`;
+  }
+  function scoreCard() {
+    if (!st.lastDate) return '';
+    const a = scoreRows('paper', null, st.paperStart), m = st.rot && st.rot.equity.length > 1 ? scoreRows('rot', st.rot.equity, st.rot.equity[0][0]) : null;
+    const row = (n, r, sub) => `<div class="row"><div><b>${n}</b><div class="m">${sub || ''}</div></div><div class="r"><b class="${cls(r)}">${r == null ? '–' : pct(r)}</b></div></div>`;
+    let h = `<div class="sec">Scorecard vs an index fund</div><div class="card">`;
+    h += row('Your account', a.ret, `since ${fdate(st.paperStart)}`) + row('Index fund (NIFTYBEES)', a.idx, 'same period · the Nifty with dividends') + (a.mix != null ? row('50% index + 50% momentum ETF', a.mix, 'same period · rebalanced monthly') : '');
+    h += `<p class="sub" style="margin:6px 0 10px">${esc(scoreVerdict(a))}</p>`;
+    if (m) h += row('Momentum account', m.ret, `since ${fdate(m.from)}`) + row('Index fund, same period', m.idx) + `<p class="sub" style="margin:6px 0 0">${esc(scoreVerdict(m))}</p>`;
+    return h + `</div>`;
+  }
+  // ---------------------------------------------------------------- 5-year outcome ranges (block bootstrap)
+  function mcCard() {
+    const rows = [['Momentum rotation', 'momentum'], ['Hold every Nifty 50 stock equally (≈ Beat the Nifty)', 'equal'], ['Index fund (NIFTYBEES)', 'index']].map(([n, k]) => [n, k, E.monteCarlo(k)]);
+    const L = (x) => inr(x * 100000).replace('.00', '');
+    return `<div class="card"><div class="lbl">₹1 lakh over 5 years · 2,000 shuffled histories</div>` + rows.map(([n, k, m]) => `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(n)}</b><b>${L(m.p50)}</b></div>
+      <div class="m">9 in 10 futures between ${L(m.p10)} and ${L(m.p90)}${k === 'index' ? '' : ` · beat the index fund in ${Math.round(m.beat * 100)}%`}</div></div>`).join('') +
+      `<p class="m" style="margin:8px 0 0">Built by stitching random 12-month stretches of ${rows[0][2].from.slice(0, 4)}–${rows[0][2].to.slice(0, 4)} history (from the honest backtests: real Nifty 50 membership, costs, tax) into 5-year futures – the same stretches for every line, so they're compared fairly. The middle number is the typical outcome; the range is what bad and good luck looked like. The future can be worse than any past stretch.</p></div>`;
+  }
+  // ---------------------------------------------------------------- live prediction tracking
+  // Every update logs each stock's read (5-session lean), trend call and indicator call (20 sessions) and the 2-week cone;
+  // they are scored once enough sessions have passed, so useless predictions show up as no better than guessing.
+  function logPredictions() {
+    const L = st.predLog = st.predLog || [];
+    const have = new Set(L.map((x) => x.sym + '|' + x.d));
+    for (const [s, T] of Object.entries(st.tickers)) {
+      const P = T.pred; if (!P || !P.asOf || have.has(s + '|' + P.asOf)) continue;
+      L.push({ sym: s, d: P.asOf, px: P.price, lean: P.outlook.lean, tr: P.trend ? P.trend.call : null, call: P.call ? P.call.call : null, lo: P.proj.lo, hi: P.proj.hi });
+    }
+    // resolve with the closes each stock has stored (raw, the same basis as px for recent sessions)
+    for (const x of L) {
+      if (x.done) continue;
+      const T = st.tickers[x.sym]; if (!T || !T.spark) continue;
+      const i = T.spark.d.indexOf(x.d); if (i < 0) continue;
+      const at = (k) => (i + k < T.spark.c.length ? T.spark.c[i + k] : null), p0 = T.spark.c[i];
+      if (x.r5 == null && at(5) != null) x.r5 = at(5) / p0 - 1;
+      if (x.r10 == null && at(10) != null) x.r10 = at(10) / p0 - 1;
+      if (x.r20 == null && at(20) != null) { x.r20 = at(20) / p0 - 1; x.done = 1; }
+    }
+    if (L.length > 4000) L.splice(0, L.length - 4000);
+  }
+  function predScoreCard() {
+    const L = st.predLog || [];
+    const sc = (rows, ok) => ({ n: rows.length, hit: rows.filter(ok).length });
+    const r5 = L.filter((x) => x.r5 != null), r20 = L.filter((x) => x.r20 != null), r10 = L.filter((x) => x.r10 != null);
+    const up5 = r5.length ? r5.filter((x) => x.r5 > 0).length / r5.length : null, up20 = r20.length ? r20.filter((x) => x.r20 > 0).length / r20.length : null;
+    const items = [
+      ["Moli's read (5 sessions)", sc(r5.filter((x) => x.lean !== 'none'), (x) => (x.lean === 'up') === (x.r5 > 0)), up5],
+      ['Trend call (20 sessions)', sc(r20.filter((x) => x.tr && x.tr !== 'unclear'), (x) => (x.tr === 'up') === (x.r20 > 0)), up20],
+      ['Indicator call Buy/Sell (20 sessions)', sc(r20.filter((x) => x.call && x.call !== 'hold'), (x) => (x.call === 'buy') === (x.r20 > 0)), up20],
+      ['2-week cone held the price', sc(r10.filter((x) => x.lo && x.hi), (x) => { const p = x.px * (1 + x.r10); return p >= x.lo && p <= x.hi; }), 0.9],
+    ];
+    const guess = (b) => (b == null ? '–' : Math.round(Math.max(b, 1 - b) * 100) + '%');
+    return `<div class="card"><div class="lbl">Live prediction scorecard</div>` + items.map(([n, v, b], k) => `<div class="row"><div><b>${esc(n)}</b><div class="m">${v.n} checked · ${k === 3 ? 'should be ~90%' : `always guessing: ${guess(b)}`}</div></div><div class="r"><b>${v.n ? Math.round((v.hit / v.n) * 100) + '%' : '–'}</b><div class="m">${v.n < 30 ? 'too few yet' : k === 3 ? (v.hit / v.n >= 0.8 ? 'ok' : 'too narrow') : b != null && v.hit / v.n > Math.max(b, 1 - b) + 0.03 ? 'better than guessing' : 'noise so far'}</div></div></div>`).join('') +
+      `<p class="m" style="margin:8px 0 0">Logged at every update and scored when the outcome arrives. None of these drive trades. If one stays "noise" after a few hundred checks, ignore it.</p></div>`;
+  }
+  // ---------------------------------------------------------------- rebalance alert
+  function rebalanceAlert() {
+    const R = st.rot; if (!R || !R.pending || !R.lastDate) return null;
+    const w = R.pending.w, held = Object.keys(R.pos), sells = held.filter((s) => !w[s]), buys = Object.keys(w).filter((s) => !R.pos[s]);
+    if (!sells.length && !buys.length) return null;
+    return { key: R.lastDate, text: `${sells.length ? `sell ${sells.map(sym).join(', ')}` : ''}${sells.length && buys.length ? '; ' : ''}${buys.length ? `buy ${buys.map(sym).join(', ')}` : ''}`, sells, buys };
+  }
   const rotVal = () => (st.rot && st.rot.equity.length ? st.rot.equity[st.rot.equity.length - 1][1] : st.rot ? st.rot.cash : 0);
   function rotRet() { const e = st.rot && st.rot.equity; if (!e || e.length < 2) return null; return { ret: (e[e.length - 1][1] / e[0][1] - 1) * 100, nret: e[0][2] ? (e[e.length - 1][2] / e[0][2] - 1) * 100 : null }; }
   const nextMonthStart = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + 1, 1); };
+  /** Why the Momentum account holds what it holds right now, in plain words. */
+  function rotWhy() {
+    const R = st.rot, n = Object.keys(R.pos).length, al = rebalanceAlert();
+    if (al && al.buys.length && !n) return `buying ${al.buys.length} stocks ${fillWhen()}`;
+    if (al) return `trades ${fillWhen()}`;
+    if (R.expo === 0) return 'in cash: the Nifty is well below its 200-day average (crash filter)';
+    if (!n && R.top && !R.top.some((x) => x.mom > 0)) return 'in cash: no Nifty 50 stock has risen over the past year';
+    if (!n) return 'nothing to buy yet – it decides at the close of each month';
+    return `next rebalance ~${nextMonthStart().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`;
+  }
   function rotHomeCard() {
     if (st.rotOn === false) return '';
     if (!st.rot) return `<div class="card"><div class="lbl">Momentum rotation account</div><p class="sub" style="margin-top:4px">Starts at your next update: holds the 10 strongest Nifty 50 stocks each month.</p></div>`;
     const r = rotRet(), n = Object.keys(st.rot.pos).length;
     return `<a class="card" data-go="rot" style="display:block;cursor:pointer"><div class="lbl">Momentum rotation account ›</div><div class="big md">${inr(rotVal())}</div>
-      <p class="sub" style="margin-top:2px">${r ? `<b class="${cls(r.ret)}">${pct(r.ret)}</b> since ${fdate(st.rot.equity[0][0])}${r.nret != null ? ` · Nifty ${pct(r.nret)}` : ''} · ` : ''}${n} stock${n === 1 ? '' : 's'} · ${st.rot.expo === 0 ? 'in cash (crash filter)' : `next rebalance ~${nextMonthStart().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`}</p></a>`;
+      <p class="sub" style="margin-top:2px">${r ? `<b class="${cls(r.ret)}">${pct(r.ret)}</b> since ${fdate(st.rot.equity[0][0])}${r.nret != null ? ` · Nifty ${pct(r.nret)}` : ''} · ` : ''}${n} stock${n === 1 ? '' : 's'} · ${rotWhy()}</p></a>`;
   }
   function viewRot() {
     let h = pageHead('Momentum rotation', 'Top 10 Nifty 50 stocks, re-picked monthly', 'home');
@@ -178,17 +304,20 @@
     const R = st.rot, r = rotRet(), C = R.cfg;
     h += `<div class="card hero"><div class="lbl">Momentum account</div><div class="big">${inr(rotVal())}</div>
       <p class="sub">${r ? `<b class="${cls(r.ret)}">${pct(r.ret)}</b> since ${fdate(R.equity[0][0])}${r.nret != null ? ` · Nifty ${pct(r.nret)}` : ''} · ` : 'Started – '}${inr(R.cash)} cash · tax paid ${inr(R.tax.paid)} · costs ${inr(R.costs)}${R.divs ? ` · dividends ${inr(R.divs)}` : ''}</p>
-      ${R.equity.length >= 2 ? vsNifty(R.equity, {}, null, 'Momentum account') : ''}</div>`;
+      ${R.equity.length >= 2 ? vsNifty(R.equity, {}, null, 'Momentum account', null, benchRows('niftybees', R.equity[0][0])) : ''}</div>`;
     if (st.rotSim && st.rotSim.equity.length > 2) {
       const e = st.rotSim.equity, rr = (e[e.length - 1][1] / e[0][1] - 1) * 100, nr = (e[e.length - 1][2] / e[0][2] - 1) * 100;
       h += `<div class="card"><div class="lbl">Practice before it started · ${fdate(st.rotSim.start)} – ${fdate(st.rotSim.end)}</div>${vsNifty(e, {}, null, 'Momentum (practice)')}<p class="m" style="margin:6px 0 0"><b class="${cls(rr)}">${pct(rr)}</b> vs Nifty ${pct(nr)} after costs and ${inr(st.rotSim.tax)} tax.</p></div>`;
     }
+    { const al = rebalanceAlert(); if (al) h += `<div class="card" style="border-color:var(--clay)"><div class="lbl">Orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p><p class="m" style="margin:4px 0 0">To copy it with real money you'd place these orders yourself on your broker – Moli never trades real money.</p></div>`; }
+    if (R.equity.length > 1) { const sc = scoreRows('rot', R.equity, R.equity[0][0]); h += `<div class="card"><div class="lbl">Live scorecard</div><div class="row"><div><b>Momentum account</b></div><div class="r"><b class="${cls(sc.ret)}">${pct(sc.ret)}</b></div></div><div class="row"><div><b>Index fund, same period</b></div><div class="r"><b class="${cls(sc.idx)}">${sc.idx == null ? '–' : pct(sc.idx)}</b></div></div>${sc.mix != null ? `<div class="row"><div><b>50% index + 50% momentum ETF</b></div><div class="r"><b class="${cls(sc.mix)}">${pct(sc.mix)}</b></div></div>` : ''}<p class="sub" style="margin-top:6px">${esc(scoreVerdict(sc))}</p></div>`; }
+    h += `<div class="sec">What 5 years could look like</div>` + mcCard();
     const pos = Object.entries(R.pos), last = R.equity.length ? R.equity[R.equity.length - 1][0] : null, val = rotVal();
     const pxOf = (s) => { const t = st.tickers[s]; if (rotLook && rotLook.data[s]) { const b = rotLook.data[s].bars; return b.c[b.c.length - 1]; } return t ? t.lastClose : null; };
     h += `<div class="sec">Holding · ${pos.length}</div><div class="card">` + (pos.length ? pos.map(([s, P]) => {
       const px = pxOf(s), cost0 = P.lots.reduce((a, L) => a + L.q * L.p, 0), v = px ? P.q * px : cost0, g = cost0 ? (v / cost0 - 1) * 100 : 0, age = last ? Math.round((Date.parse(last) - Date.parse(P.lots[0] ? P.lots[0].d : P.since)) / 864e5) : 0;
       return `<div class="row"><div><b>${sym(s)}</b><div class="m">${P.q} shares · ${Math.round((v / val) * 100)}% of the account · held ${age} days${age > 365 ? ' (long-term)' : ''}</div></div><div class="r"><b>${inr(v)}</b><div class="m ${cls(g)}">${pct(g)}</div></div></div>`;
-    }).join('') : `<p class="empty">${R.pending ? 'Buys at the next open.' : R.expo === 0 ? 'In cash – the crash filter is on until the Nifty is back above its 200-day average.' : 'Nothing yet.'}</p>`) + `</div>`;
+    }).join('') : `<p class="empty">${esc(rotWhy().charAt(0).toUpperCase() + rotWhy().slice(1))}.</p>`) + `</div>`;
     if (R.top && R.top.length) h += `<div class="sec">Strongest Nifty 50 stocks now</div><div class="card">` + R.top.slice(0, 15).map((x) => `<div class="row"><div><b>${x.rank}. ${sym(x.sym)}</b>${R.pos[x.sym] ? ' <span class="pill">held</span>' : ''}</div><div class="r"><b class="${cls(x.mom)}">${pct(x.mom)}</b><div class="m">12-month move</div></div></div>`).join('') + `<p class="m" style="margin:8px 0 0">Past year's return, skipping the latest month. Held stocks stay while they're in the top ${C.topN * C.buffer} (less churn and tax).</p></div>`;
     if (R.log.length) h += `<div class="sec">What it did</div><div class="card">` + R.log.slice(-6).reverse().map((e) => `<div class="ev"><span class="d">${fdate(e.d)}</span><br>${esc(e.t)}</div>`).join('') + `</div>`;
     const tr = R.trades.slice(-20).reverse();
@@ -196,11 +325,12 @@
     h += `<div class="sec">Settings</div><div class="card"><label style="margin-top:0">Stocks held</label><div class="chips" style="margin:0">${[5, 10, 15].map((v) => `<button class="chip ${C.topN === v ? 'on' : ''}" data-rtop="${v}">${v}</button>`).join('')}</div>
       <label>Go to cash when the Nifty is below its 200-day average by</label><div class="chips" style="margin:0">${[5, 8, 100].map((v) => `<button class="chip ${C.crashGap === v ? 'on' : ''}" data-rcg="${v}">${v >= 100 ? 'never' : v + '%'}</button>`).join('')}</div>
       <label class="switch" style="margin:14px 0 0"><input type="checkbox" id="r_on" ${st.rotOn !== false ? 'checked' : ''}><span>Run the Momentum account (downloads the Nifty 50 at each update)</span></label></div>`;
-    h += `<div class="sec">Honest test</div><div class="card"><p class="sub" style="margin:0">Tested on 83 stocks – today's Nifty 50 plus former members, including ones that later collapsed (Yes Bank, Suzlon, Unitech, RCOM, Idea…). At each rebalance only the 50 most-traded were allowed, as a stand-in for "was in the Nifty then". After costs and capital-gains tax:</p>
+    h += `<div class="sec">Honest test</div><div class="card"><p class="sub" style="margin:0">Only stocks that were actually in the Nifty 50 at each date could be picked (membership history 2008–2025, reconstructed from NSE press releases), including ones that later collapsed (Yes Bank, Suzlon, Unitech, RCOM, Idea…). After costs, slippage by liquidity and capital-gains tax at the rates of each year:</p>
       <div class="row"><div><b>2010–2019</b><div class="m">used to choose the settings</div></div><div class="r"><b>+${ROT_TEST.dev[0]}%/yr</b><div class="m">Nifty with dividends +${ROT_TEST.dev[1]}%</div></div></div>
       <div class="row"><div><b>2020–2026</b><div class="m">locked away, tested once</div></div><div class="r"><b>+${ROT_TEST.hold[0]}%/yr</b><div class="m">Nifty with dividends +${ROT_TEST.hold[1]}%</div></div></div>
       <div class="row"><div><b>2010–2026</b><div class="m">worst fall ${ROT_TEST.dd}%</div></div><div class="r"><b>+${ROT_TEST.all[0]}%/yr</b><div class="m">Nifty with dividends +${ROT_TEST.all[1]}%</div></div></div>
-      <p class="m" style="margin:8px 0 0">It beat the Nifty over 16 years but lost to it in the unseen 2020–2026 test (mostly 2024–26). Momentum works over long stretches and fails for years at a time. Fundamentals (earnings, debt) weren't used: free historical data for them doesn't exist, so they couldn't be tested honestly. Tax uses today's rates (20% / 12.5% above ₹1.25 lakh).</p>
+      <div class="row"><div><b>Just hold every Nifty 50 stock equally</b><div class="m">2010–19 +${ROT_TEST.ew[1]}% · 2020–26 +${ROT_TEST.ew[2]}%</div></div><div class="r"><b>+${ROT_TEST.ew[0]}%/yr</b><div class="m">2010–2026, no crash filter</div></div></div>
+      <p class="m" style="margin:8px 0 0"><b>Momentum did not beat the index.</b> An earlier version of this test showed +12%/yr – that came from not knowing which stocks were really in the Nifty back then. Picking the top 5 instead of 10 looked great on 2010–19 and failed on 2020–26 (overfitting). Volatility targeting and a gradual 50% step didn't help. Some former members (HDFC Ltd, Satyam, Ranbaxy…) have no price data, so they're missing. Fundamentals (earnings, debt) weren't used: free point-in-time history doesn't exist.</p>
       <div class="actions"><button class="btn ghost sm" data-dl="rot">Download trades CSV</button></div></div>`;
     return h;
   }
@@ -235,6 +365,8 @@
       for (const s in data) if (st.tickers[s]) { try { st.tickers[s].pred = E.predict(data[s].bars, { nifty: nifty && nifty.bars }); } catch (e) { /* keep old */ } }
       if (nifty) { const nd = nifty.bars.d; look = { data, nifty, start: nd[Math.max(0, nd.length - 250)], pcSym: look && look.pcSym, pc: null }; }
       if (st.rotOn !== false && nifty) { try { await updateRot(data, nifty); } catch (e) { if (e.message === 'stopped') throw e; run.msg = 'Momentum account: ' + e.message; } }
+      try { await updateBench(); } catch (e) { if (e.message === 'stopped') throw e; }
+      try { logPredictions(); } catch (e) { /* tracking is best-effort */ }
       const brief = briefing(res, before);
       if (brief) say(brief, res.days > 300 ? 'sim' : res.days ? 'pnl' : null);
       Object.assign(run, { days: res.days, from: res.days ? (before || st.warmStart) : null, to: st.lastDate });
@@ -347,7 +479,7 @@
         <button class="chip ${B.quick ? 'on' : ''}" data-tstyle="quick">Quick – in and out</button></div>
       ${B.beat ? `<p class="m" style="margin:10px 0 0">Holds every stock and steps aside only in a market crash. No stop-losses, no switching. ${esc(BEAT_TEST.replace(/\\'/g, "'"))}</p>
         <label>Step aside when the Nifty is below its 200-day average by</label><div class="chips" style="margin:0">${[5, 8, 12, 100].map((v) => `<button class="chip ${B.crashGap === v ? 'on' : ''}" data-cg="${v}">${v >= 100 ? 'never' : v + '%'}</button>`).join('')}</div>
-        <p class="m" style="margin:8px 0 0">5%: best in tests (+10.4 pts a period on average, worst fall −23% in 2008) · never: +9.7 pts, but fell 55% in 2008 and 39% in 2020.</p>` : `<p class="m" style="margin:10px 0 0">${B.quick ? 'Enters fast on sharp dips, pullbacks and volume breakouts, and exits fast: at the profit target, the stop-loss or the time limit. Expect many small trades lasting days. More trades means more costs (STT, stamp duty) – they can eat small profits.' : 'Holds trends for weeks or months. Fewer trades, bigger wins and losses. In tests it beat the Nifty in crashes but trailed it badly in bull markets (2012–21, 2023–25).'}</p>`}
+        <p class="m" style="margin:8px 0 0">never (default): best return in the honest test (+11.5%/yr holding all Nifty 50 stocks), worst fall −39%. 5%: about +7.4%/yr with smaller falls (−25%).</p>` : `<p class="m" style="margin:10px 0 0">${B.quick ? 'Enters fast on sharp dips, pullbacks and volume breakouts, and exits fast: at the profit target, the stop-loss or the time limit. Expect many small trades lasting days. More trades means more costs (STT, stamp duty) – they can eat small profits.' : 'Holds trends for weeks or months. Fewer trades, bigger wins and losses. In tests it beat the Nifty in crashes but trailed it badly in bull markets (2012–21, 2023–25).'}</p>`}
       ${B.quick ? `<label>Take profit at</label><div class="chips" style="margin:0">${[0, 1, 1.5, 2, 3].map((v) => `<button class="chip ${B.tpAtr === v ? 'on' : ''}" data-tp="${v}">${v ? '+' + v + '× ATR' : 'off'}</button>`).join('')}</div>
         <label>Stop-loss</label><div class="chips" style="margin:0">${[1, 1.5, 2, 3].map((v) => `<button class="chip ${B.stopAtr === v ? 'on' : ''}" data-sl="${v}">${v}× ATR</button>`).join('')}</div>
         <label>Time limit</label><div class="chips" style="margin:0">${[0, 3, 5, 10, 20].map((v) => `<button class="chip ${B.maxDays === v ? 'on' : ''}" data-md="${v}">${v ? v + ' sessions' : 'off'}</button>`).join('')}</div>
@@ -437,9 +569,9 @@
     const gap = st.lastFetch ? (Date.now() - st.lastFetch) / 36e5 : 99;
     const mk = market();
     if (gap > 20 && !mk.open) add({ kind: 'warn', title: 'Time to catch up', body: `Last update was ${updatedAgo()}. Update so I can trade the sessions I missed and learn from them.`, act: ['update', 'Update now'] });
-    if (!B.beat) add({ kind: nRet != null && ret < nRet ? 'warn' : 'idea', title: nRet != null && ret < nRet ? `Behind the Nifty by ${(nRet - ret).toFixed(1)} pts – try Beat the Nifty` : 'Want to beat the Nifty?', body: `In tests on 9 two-year periods (2008–2026) my ${B.quick ? 'quick' : 'normal'} style beat the Nifty in only ${B.quick ? 'a few' : '3'} – switching in and out of stocks costs too much in rising markets. Beat the Nifty stays invested and only steps aside in a crash: it beat the Nifty in 6 of 9, by 10.4 pts on average.`, act: ['beat-on', 'Switch to Beat the Nifty'] });
+    if (!B.beat) add({ kind: nRet != null && ret < nRet ? 'warn' : 'idea', title: nRet != null && ret < nRet ? `Behind the Nifty by ${(nRet - ret).toFixed(1)} pts – try Beat the Nifty` : 'Want to beat the Nifty?', body: `In tests my ${B.quick ? 'quick' : 'normal'} style lagged the Nifty – switching in and out of stocks costs too much in rising markets. Beat the Nifty simply stays invested; in the honest test holding all Nifty 50 stocks equally made +11.5%/yr vs +10.6% for the index (2010–2026).`, act: ['beat-on', 'Switch to Beat the Nifty'] });
     const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending);
-    if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + `. They fill at 9:15 AM – in ${dur(mk.nextOpen - Date.now())}.`, pill: 'tomorrow' });
+    if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + ` – ${fillWhen()}. Orders are placed at a day's close and fill at the next open, so a new account starts holding shares from the next trading day.`, pill: 'next open' });
     if (nRet != null && days >= 15 && ret < nRet - 3) add({ kind: 'warn', title: `The Nifty is ahead of me by ${(nRet - ret).toFixed(1)} pts`, body: `Since ${fdate(st.paperStart)} I made ${pct(ret)} while a Nifty index fund made ${pct(nRet)}. Most active strategies trail the index over time. Holding part of the money in NIFTYBEES (a Nifty ETF) keeps you close to the market.`, pill: `−${(nRet - ret).toFixed(1)} pts`, neg: true, act: st.cfg.tickers.includes('NIFTYBEES.NS') ? null : ['add:NIFTYBEES.NS', 'Add NIFTYBEES'] });
     if (nRet != null && days >= 15 && ret > nRet + 2) add({ kind: 'good', title: `Ahead of the Nifty by ${(ret - nRet).toFixed(1)} pts`, body: `I made ${pct(ret)} vs the Nifty's ${pct(nRet)} since ${fdate(st.paperStart)}. A short streak can be luck – keep watching it over months.`, pill: `+${(ret - nRet).toFixed(1)} pts` });
     const dd = maxDD(idx);
@@ -519,6 +651,8 @@
       <h3>${esc(a.title)}</h3><p>${esc(a.body)}</p>
       <div class="actions" style="margin-top:10px">${a.act ? `<button class="btn sm" data-act="${esc(a.act[0])}">${esc(a.act[1])}</button>` : ''}${adv.length > 1 ? `<a class="more" data-act="nexttip">Next tip (${(tipIdx % adv.length) + 1}/${adv.length}) ›</a>` : ''}</div></div></div>`;
     h += rotHomeCard();
+    { const al = rebalanceAlert(); if (al) h += `<a class="card" data-go="rot" style="display:block;cursor:pointer;border-color:var(--clay)"><div class="lbl">Momentum · orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p></a>`; }
+    h += scoreCard();
     const paused = E.isPaused(st), mk = market();
     h += `<div class="card"><div class="chips" style="margin:0">${marketChip()}${paused ? `<span class="chip paused">${paused === 'stop' ? 'Stopped' : 'Paused'}</span>` : ''}</div>
       <div class="actions">${paused ? `<button class="btn sm" data-act="resume">Resume trading</button>` : `<button class="btn sm ghost" data-act="pause">Pause new buys</button><button class="btn sm warn" data-act="stopall">Stop &amp; sell all</button>`}</div></div>`;
@@ -532,7 +666,7 @@
     h += `<div class="card"><div class="lbl">Positions</div>` + (pos.length ? pos.map(([s, t]) => {
       const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
       return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}${tr.tp ? ` · target ${px(tr.tp)}` : ''}</div></div><div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${inr((t.lastClose - tr.ep) * tr.q)}</div></div></div>`;
-    }).join('') : `<p class="empty">No open positions – everything is in cash.</p>`) + `</div>`;
+    }).join('') : `<p class="empty">${(() => { const b = Object.entries(st.tickers).filter(([, t]) => t.live.pending === 'BUY'); if (b.length) return `Nothing yet – buying ${b.map(([x]) => sym(x)).join(', ')} ${esc(fillWhen())}.`; const B = E.brainParams(st); return E.isPaused(st) ? 'Nothing held – trading is paused (tap Resume).' : B.beat ? 'Nothing held yet – Beat the Nifty buys every stock at the next open after an update.' : 'No open positions – no strategy has a buy signal right now.'; })()}</p>`) + `</div>`;
     h += `<div class="card"><div class="lbl">Your stocks · ${st.cfg.tickers.length}</div>` + Object.entries(T).slice(0, 6).map(([s, t]) => {
       const sp = t.spark.c, ch = sp.length > 1 ? (sp[sp.length - 1] / sp[sp.length - 2] - 1) * 100 : 0;
       const o = t.pred && t.pred.outlook;
@@ -600,7 +734,9 @@
       <div class="kv"><span class="dot" style="background:var(--${pnl >= 0 ? 'sage' : 'clay'})"></span><span class="k">${pnl >= 0 ? 'Profit' : 'Loss'} so far</span><span class="v1">${inr(Math.abs(pnl))}</span><span class="v2 ${cls(pnl)}">${pct(ret)}</span></div>
       <p class="m" style="margin:8px 0 0">${E.brainParams(st).quick ? 'Quick trading – in and out within days.' : 'Normal trading – riding trends.'}</p></div>`;
     h += `<div class="sec">Suggestions</div>` + adv.map(advCard).join('');
+    h += `<div class="sec">What 5 years could look like</div>` + mcCard();
     h += `<div class="sec">Predictions · candles, chart patterns &amp; trend</div>` + predictionsCard();
+    h += predScoreCard();
     const R = st.learning.rules;
     h += `<div class="sec">Mistakes I won't repeat</div>` + mistakesCard(st.learning.mistakes);
     h += `<div class="sec">What I've learned</div><div class="card">` + Object.entries(E.FEATURES).map(([k, f]) => {
@@ -752,11 +888,12 @@
     const m = new Map(other.map((r) => [r[0], r[1]])), b0 = m.get(rows[0][0]) || other[0][1];
     return rows.map((r) => (m.has(r[0]) ? (m.get(r[0]) / b0) * 100 : null));
   }
-  function vsNifty(rows, extra = {}, beatRows = null, name = 'Paper account', rotRows = null) {
-    const idx = returnIndex(rows), n0 = (rows.find((r) => r[2]) || [])[2], bt = alignIdx(rows, beatRows), rt = alignIdx(rows, rotRows);
+  function vsNifty(rows, extra = {}, beatRows = null, name = 'Paper account', rotRows = null, fundRows = null) {
+    const idx = returnIndex(rows), n0 = (rows.find((r) => r[2]) || [])[2], bt = alignIdx(rows, beatRows), rt = alignIdx(rows, rotRows), ft = alignIdx(rows, fundRows);
     return multiLine([{ v: down(idx, 300), color: css('--clay'), name },
       ...(bt ? [{ v: down(bt, 300), color: css('--ochre'), name: 'Beat the Nifty', w: 1.6 }] : []),
       ...(rt ? [{ v: down(rt, 300), color: css('--sage'), name: 'Momentum rotation', w: 1.6 }] : []),
+      ...(ft ? [{ v: down(ft, 300), color: css('--ink'), name: 'Index fund (NIFTYBEES)', w: 1.2 }] : []),
       { v: down(rows.map((r) => (r[2] && n0 ? (r[2] / n0) * 100 : null)), 300), color: css('--slate'), name: 'Nifty 50', dash: 1, w: 1.4 }], extra);
   }
   const monthKey = (d) => d.slice(0, 7), monthLbl = (k) => new Date(k + '-01T00:00:00').toLocaleDateString('en-IN', { month: 'short' });
@@ -772,7 +909,7 @@
     const trades = (live ? allLiveTrades() : Object.entries(st.tickers).flatMap(([s, t]) => t.sim.trades.map((x) => ({ ...x, sym: s })))).filter((t) => t.x).sort((a, b) => a.x.localeCompare(b.x)).slice(-40);
     const tag = live ? '' : ' · practice run';
     let h = `<div class="sec">Charts${tag}</div>`;
-    h += `<div class="card"><div class="lbl">Account vs the Nifty</div>${vsNifty(rows)}</div>`;
+    h += `<div class="card"><div class="lbl">Account vs the Nifty</div>${vsNifty(rows, {}, null, 'Paper account', null, live ? benchRows('niftybees', rows[0][0]) : null)}</div>`;
     h += `<div class="card"><div class="lbl">Drop from the peak</div>${ddChart(returnIndex(rows))}</div>`;
     h += `<div class="card"><div class="lbl">Month by month</div>${barChart(monthlyBars(rows))}<div class="m">Return of the whole account each month (deposits and withdrawals excluded).</div></div>`;
     h += `<div class="card"><div class="lbl">Each closed trade</div>${barChart(trades.map((t) => ({ v: t.ret, label: '' })))}<div class="m">${trades.length ? `Last ${trades.length} trades, oldest left. Tallest win ${pct(Math.max(...trades.map((t) => t.ret)))}, worst loss ${pct(Math.min(...trades.map((t) => t.ret)))}.` : 'No closed trades yet.'}</div></div>`;
@@ -1590,7 +1727,7 @@
     const ch = E.applyParams(st, next, todayIST(), nowIso()); store.save(st);
     return ch;
   }
-  const BEAT_TEST = 'In tests on 9 two-year periods from 2008 to 2026 with 8 big stocks it beat the Nifty in 6 of them, by 10.4 points on average – but it trailed the Nifty in 2012–13 and 2023–26, and fell up to 23% in 2008. Simply holding the same 8 stocks did a little worse on average (+9.7) and fell 55% in 2008. Which stocks you pick matters most – and those 8 are today\'s winners, which flatters every test.';
+  const BEAT_TEST = 'Honest test with real Nifty 50 membership: holding every member equally made +11.5%/yr over 2010–2026 vs +10.6% for the Nifty with dividends – but it lost in 2010–19 (+8.1% vs +9.4%) and won in 2020–26, and fell 39% at worst. Adding a 5% crash filter cut it to about +7.4%/yr, so the filter is off by default. Your result depends mostly on the stocks you pick.';
   const styleText = () => {
     const B = E.brainParams(st);
     if (B.beat) return `**Beat the Nifty**: I stay invested in each of your stocks (buying trends already under way) and only step aside when the Nifty falls ${B.crashGap >= 100 ? '– never, crash filter off' : `${B.crashGap}% below its 200-day average, buying back once it's above the average again`}. No stop-losses and no strategy switching – in tests, switching in and out is what made me lag the Nifty. ${BEAT_TEST.replace(/\\'/g, "'")}`;
@@ -1747,7 +1884,7 @@
     if (/\b(momentum|rotation|rotate)\b/.test(l) && !/\btrain\b/.test(l)) {
       if (!st.rot) return say('The Momentum rotation account starts at your next update – say **update**.');
       const r = rotRet(), pos = Object.keys(st.rot.pos);
-      return say(`**Momentum rotation account:** ${inr(rotVal())}${r ? ` (${pct(r.ret)} since ${fdate(st.rot.equity[0][0])}${r.nret != null ? `, Nifty ${pct(r.nret)}` : ''})` : ''}. Holding ${pos.length ? pos.map(sym).join(', ') : 'nothing yet'}.${st.rot.top ? ` Strongest now: ${st.rot.top.slice(0, 5).map((x) => `${sym(x.sym)} ${pct(x.mom)}`).join(', ')}.` : ''}\n\nEach month it holds the 10 Nifty 50 stocks with the best past-year move and goes to cash in a crash. Honest test 2010–2026: +${ROT_TEST.all[0]}%/yr vs +${ROT_TEST.all[1]}%/yr for the Nifty with dividends, after costs and tax – but it lost to the Nifty in 2020–2026.`);
+      return say(`**Momentum rotation account:** ${inr(rotVal())}${r ? ` (${pct(r.ret)} since ${fdate(st.rot.equity[0][0])}${r.nret != null ? `, Nifty ${pct(r.nret)}` : ''})` : ''}. Holding ${pos.length ? pos.map(sym).join(', ') : 'nothing yet'}.${st.rot.top ? ` Strongest now: ${st.rot.top.slice(0, 5).map((x) => `${sym(x.sym)} ${pct(x.mom)}`).join(', ')}.` : ''}\n\nEach month it holds the 10 Nifty 50 stocks with the best past-year move and goes to cash in a crash. Honest test with real Nifty 50 membership 2010–2026: +${ROT_TEST.all[0]}%/yr vs +${ROT_TEST.all[1]}%/yr for the Nifty with dividends after costs and tax – it did **not** beat the index. It runs as a live experiment.`);
     }
     if (/\b(beat|outperform|out perform|better than)\b.*\b(nifty|index|market)\b|\bbeat mode\b|\bstay invested\b/.test(l) && !/\btrain\b/.test(l)) {
       const ch = setStyle('beat');
@@ -2005,7 +2142,7 @@
       if (!setupPicks.size) return toast('Pick at least one stock');
       const cfg = { tickers: [...setupPicks], capital: num('s_c', 500000) || 500000, warmYears: Math.min(Math.round(num('s_w', 2)), 8),
         stopAtr: num('s_s', 3), riskPct: num('s_r', 0), slippage: 0.05 };
-      st = E.newState(cfg, todayIST()); st.chat = []; st.beatOffered = true;
+      st = E.newState(cfg, todayIST()); st.chat = []; st.beatOffered = true; st.honest2 = true;
       st.cfg.brain = { ...E.BEAT_PRESET }; st.cfg.stopAtr = 0; // default style: Beat the Nifty (best in tests)
       const nm = ($('s_name') || {}).value; if (nm && nm.trim()) st.cfg.name = nm.trim().slice(0, 30);
       say(`Hi – I'm Moli. I'll paper trade your ${cfg.tickers.length} stocks with ${inr(cfg.capital)} of pretend money and learn from my mistakes.\n\nFirst I'm practising on the last ${cfg.warmYears} years so I don't start from zero. This takes a few seconds.`);
@@ -2054,6 +2191,13 @@
   $('composer').onsubmit = (e) => { e.preventDefault(); send($('msg').value); };
   $('msg').addEventListener('input', autosize);
   $('msg').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('msg').value); } });
+  // honest re-test (real Nifty 50 membership): the crash filter cost ~3–4%/yr, so Beat the Nifty no longer uses it by default
+  if (st && st.lastDate && !st.honest2) {
+    st.honest2 = true;
+    const B0 = E.brainParams(st);
+    if (B0.beat && B0.crashGap === 5) { setStyle('beat', { crashGap: 100 }); say(`I re-tested everything with the stocks that were **really** in the Nifty 50 at each date (not today's winners). Two things changed:\n\n- **Momentum rotation did not beat the index** (+${ROT_TEST.all[0]}%/yr vs +${ROT_TEST.all[1]}%/yr, 2010–2026). It keeps running as a live experiment.\n- **The crash filter cost more than it saved** (≈+7.4%/yr with it vs +11.5%/yr without, holding all Nifty 50 stocks), so I've switched it off for Beat the Nifty. You can turn it back on in Settings.\n\nThe bar to beat is now an index fund (NIFTYBEES) – see the scorecard on Home.`); }
+    store.save(st);
+  }
   // one-time switch for existing accounts: the user asked for a style that aims to beat the Nifty
   if (st && st.lastDate && !st.beatOffered) {
     st.beatOffered = true;
