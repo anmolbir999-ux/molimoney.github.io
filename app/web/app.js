@@ -79,6 +79,13 @@
     if (weekday && mins >= openM && mins < closeM) return { open: true, closeAt: at(n, 15, 30), nextOpen: nextOpen(n, mins, openM) };
     return { open: false, nextOpen: nextOpen(n, mins, openM) };
   }
+  /** When an order placed at the last close fills: the open of the first session after st.lastDate. */
+  function fillWhen() {
+    const n = ist(), day = n.getUTCDay(), mins = n.getUTCHours() * 60 + n.getUTCMinutes(), wk = day >= 1 && day <= 5;
+    if (wk && mins >= 9 * 60 + 15 && st.lastDate && st.lastDate < todayIST()) return `at today's 9:15 AM open – you'll see it after today's update (after 3:45 PM)`;
+    const mk = market(), d = mk.nextOpen ? new Date(mk.nextOpen + IST) : null;
+    return d ? `at ${d.toLocaleDateString('en-IN', { weekday: 'long', timeZone: 'UTC' })}'s 9:15 AM open (in ${dur(mk.nextOpen - Date.now())}) – update after 3:45 PM that day to see it` : 'at the next open';
+  }
   function nextOpen(n, mins, openM) {
     for (let k = 0; k < 8; k++) {
       const d = new Date(n.getTime() + k * 864e5), wd = d.getUTCDay();
@@ -274,12 +281,22 @@
   const rotVal = () => (st.rot && st.rot.equity.length ? st.rot.equity[st.rot.equity.length - 1][1] : st.rot ? st.rot.cash : 0);
   function rotRet() { const e = st.rot && st.rot.equity; if (!e || e.length < 2) return null; return { ret: (e[e.length - 1][1] / e[0][1] - 1) * 100, nret: e[0][2] ? (e[e.length - 1][2] / e[0][2] - 1) * 100 : null }; }
   const nextMonthStart = () => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + 1, 1); };
+  /** Why the Momentum account holds what it holds right now, in plain words. */
+  function rotWhy() {
+    const R = st.rot, n = Object.keys(R.pos).length, al = rebalanceAlert();
+    if (al && al.buys.length && !n) return `buying ${al.buys.length} stocks ${fillWhen()}`;
+    if (al) return `trades ${fillWhen()}`;
+    if (R.expo === 0) return 'in cash: the Nifty is well below its 200-day average (crash filter)';
+    if (!n && R.top && !R.top.some((x) => x.mom > 0)) return 'in cash: no Nifty 50 stock has risen over the past year';
+    if (!n) return 'nothing to buy yet – it decides at the close of each month';
+    return `next rebalance ~${nextMonthStart().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`;
+  }
   function rotHomeCard() {
     if (st.rotOn === false) return '';
     if (!st.rot) return `<div class="card"><div class="lbl">Momentum rotation account</div><p class="sub" style="margin-top:4px">Starts at your next update: holds the 10 strongest Nifty 50 stocks each month.</p></div>`;
     const r = rotRet(), n = Object.keys(st.rot.pos).length;
     return `<a class="card" data-go="rot" style="display:block;cursor:pointer"><div class="lbl">Momentum rotation account ›</div><div class="big md">${inr(rotVal())}</div>
-      <p class="sub" style="margin-top:2px">${r ? `<b class="${cls(r.ret)}">${pct(r.ret)}</b> since ${fdate(st.rot.equity[0][0])}${r.nret != null ? ` · Nifty ${pct(r.nret)}` : ''} · ` : ''}${n} stock${n === 1 ? '' : 's'} · ${st.rot.expo === 0 ? 'in cash (crash filter)' : `next rebalance ~${nextMonthStart().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`}</p></a>`;
+      <p class="sub" style="margin-top:2px">${r ? `<b class="${cls(r.ret)}">${pct(r.ret)}</b> since ${fdate(st.rot.equity[0][0])}${r.nret != null ? ` · Nifty ${pct(r.nret)}` : ''} · ` : ''}${n} stock${n === 1 ? '' : 's'} · ${rotWhy()}</p></a>`;
   }
   function viewRot() {
     let h = pageHead('Momentum rotation', 'Top 10 Nifty 50 stocks, re-picked monthly', 'home');
@@ -292,7 +309,7 @@
       const e = st.rotSim.equity, rr = (e[e.length - 1][1] / e[0][1] - 1) * 100, nr = (e[e.length - 1][2] / e[0][2] - 1) * 100;
       h += `<div class="card"><div class="lbl">Practice before it started · ${fdate(st.rotSim.start)} – ${fdate(st.rotSim.end)}</div>${vsNifty(e, {}, null, 'Momentum (practice)')}<p class="m" style="margin:6px 0 0"><b class="${cls(rr)}">${pct(rr)}</b> vs Nifty ${pct(nr)} after costs and ${inr(st.rotSim.tax)} tax.</p></div>`;
     }
-    { const al = rebalanceAlert(); if (al) h += `<div class="card" style="border-color:var(--clay)"><div class="lbl">At the next open (9:15 AM)</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))}.</p><p class="m" style="margin:4px 0 0">To copy it with real money you'd place these orders yourself on your broker – Moli never trades real money.</p></div>`; }
+    { const al = rebalanceAlert(); if (al) h += `<div class="card" style="border-color:var(--clay)"><div class="lbl">Orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p><p class="m" style="margin:4px 0 0">To copy it with real money you'd place these orders yourself on your broker – Moli never trades real money.</p></div>`; }
     if (R.equity.length > 1) { const sc = scoreRows('rot', R.equity, R.equity[0][0]); h += `<div class="card"><div class="lbl">Live scorecard</div><div class="row"><div><b>Momentum account</b></div><div class="r"><b class="${cls(sc.ret)}">${pct(sc.ret)}</b></div></div><div class="row"><div><b>Index fund, same period</b></div><div class="r"><b class="${cls(sc.idx)}">${sc.idx == null ? '–' : pct(sc.idx)}</b></div></div>${sc.mix != null ? `<div class="row"><div><b>50% index + 50% momentum ETF</b></div><div class="r"><b class="${cls(sc.mix)}">${pct(sc.mix)}</b></div></div>` : ''}<p class="sub" style="margin-top:6px">${esc(scoreVerdict(sc))}</p></div>`; }
     h += `<div class="sec">What 5 years could look like</div>` + mcCard();
     const pos = Object.entries(R.pos), last = R.equity.length ? R.equity[R.equity.length - 1][0] : null, val = rotVal();
@@ -300,7 +317,7 @@
     h += `<div class="sec">Holding · ${pos.length}</div><div class="card">` + (pos.length ? pos.map(([s, P]) => {
       const px = pxOf(s), cost0 = P.lots.reduce((a, L) => a + L.q * L.p, 0), v = px ? P.q * px : cost0, g = cost0 ? (v / cost0 - 1) * 100 : 0, age = last ? Math.round((Date.parse(last) - Date.parse(P.lots[0] ? P.lots[0].d : P.since)) / 864e5) : 0;
       return `<div class="row"><div><b>${sym(s)}</b><div class="m">${P.q} shares · ${Math.round((v / val) * 100)}% of the account · held ${age} days${age > 365 ? ' (long-term)' : ''}</div></div><div class="r"><b>${inr(v)}</b><div class="m ${cls(g)}">${pct(g)}</div></div></div>`;
-    }).join('') : `<p class="empty">${R.pending ? 'Buys at the next open.' : R.expo === 0 ? 'In cash – the crash filter is on until the Nifty is back above its 200-day average.' : 'Nothing yet.'}</p>`) + `</div>`;
+    }).join('') : `<p class="empty">${esc(rotWhy().charAt(0).toUpperCase() + rotWhy().slice(1))}.</p>`) + `</div>`;
     if (R.top && R.top.length) h += `<div class="sec">Strongest Nifty 50 stocks now</div><div class="card">` + R.top.slice(0, 15).map((x) => `<div class="row"><div><b>${x.rank}. ${sym(x.sym)}</b>${R.pos[x.sym] ? ' <span class="pill">held</span>' : ''}</div><div class="r"><b class="${cls(x.mom)}">${pct(x.mom)}</b><div class="m">12-month move</div></div></div>`).join('') + `<p class="m" style="margin:8px 0 0">Past year's return, skipping the latest month. Held stocks stay while they're in the top ${C.topN * C.buffer} (less churn and tax).</p></div>`;
     if (R.log.length) h += `<div class="sec">What it did</div><div class="card">` + R.log.slice(-6).reverse().map((e) => `<div class="ev"><span class="d">${fdate(e.d)}</span><br>${esc(e.t)}</div>`).join('') + `</div>`;
     const tr = R.trades.slice(-20).reverse();
@@ -554,7 +571,7 @@
     if (gap > 20 && !mk.open) add({ kind: 'warn', title: 'Time to catch up', body: `Last update was ${updatedAgo()}. Update so I can trade the sessions I missed and learn from them.`, act: ['update', 'Update now'] });
     if (!B.beat) add({ kind: nRet != null && ret < nRet ? 'warn' : 'idea', title: nRet != null && ret < nRet ? `Behind the Nifty by ${(nRet - ret).toFixed(1)} pts – try Beat the Nifty` : 'Want to beat the Nifty?', body: `In tests my ${B.quick ? 'quick' : 'normal'} style lagged the Nifty – switching in and out of stocks costs too much in rising markets. Beat the Nifty simply stays invested; in the honest test holding all Nifty 50 stocks equally made +11.5%/yr vs +10.6% for the index (2010–2026).`, act: ['beat-on', 'Switch to Beat the Nifty'] });
     const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending);
-    if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + `. They fill at 9:15 AM – in ${dur(mk.nextOpen - Date.now())}.`, pill: 'tomorrow' });
+    if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + ` – ${fillWhen()}. Orders are placed at a day's close and fill at the next open, so a new account starts holding shares from the next trading day.`, pill: 'next open' });
     if (nRet != null && days >= 15 && ret < nRet - 3) add({ kind: 'warn', title: `The Nifty is ahead of me by ${(nRet - ret).toFixed(1)} pts`, body: `Since ${fdate(st.paperStart)} I made ${pct(ret)} while a Nifty index fund made ${pct(nRet)}. Most active strategies trail the index over time. Holding part of the money in NIFTYBEES (a Nifty ETF) keeps you close to the market.`, pill: `−${(nRet - ret).toFixed(1)} pts`, neg: true, act: st.cfg.tickers.includes('NIFTYBEES.NS') ? null : ['add:NIFTYBEES.NS', 'Add NIFTYBEES'] });
     if (nRet != null && days >= 15 && ret > nRet + 2) add({ kind: 'good', title: `Ahead of the Nifty by ${(ret - nRet).toFixed(1)} pts`, body: `I made ${pct(ret)} vs the Nifty's ${pct(nRet)} since ${fdate(st.paperStart)}. A short streak can be luck – keep watching it over months.`, pill: `+${(ret - nRet).toFixed(1)} pts` });
     const dd = maxDD(idx);
@@ -634,7 +651,7 @@
       <h3>${esc(a.title)}</h3><p>${esc(a.body)}</p>
       <div class="actions" style="margin-top:10px">${a.act ? `<button class="btn sm" data-act="${esc(a.act[0])}">${esc(a.act[1])}</button>` : ''}${adv.length > 1 ? `<a class="more" data-act="nexttip">Next tip (${(tipIdx % adv.length) + 1}/${adv.length}) ›</a>` : ''}</div></div></div>`;
     h += rotHomeCard();
-    { const al = rebalanceAlert(); if (al) h += `<a class="card" data-go="rot" style="display:block;cursor:pointer;border-color:var(--clay)"><div class="lbl">Momentum · next open (9:15 AM)</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))}.</p></a>`; }
+    { const al = rebalanceAlert(); if (al) h += `<a class="card" data-go="rot" style="display:block;cursor:pointer;border-color:var(--clay)"><div class="lbl">Momentum · orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p></a>`; }
     h += scoreCard();
     const paused = E.isPaused(st), mk = market();
     h += `<div class="card"><div class="chips" style="margin:0">${marketChip()}${paused ? `<span class="chip paused">${paused === 'stop' ? 'Stopped' : 'Paused'}</span>` : ''}</div>
@@ -649,7 +666,7 @@
     h += `<div class="card"><div class="lbl">Positions</div>` + (pos.length ? pos.map(([s, t]) => {
       const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
       return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}${tr.tp ? ` · target ${px(tr.tp)}` : ''}</div></div><div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${inr((t.lastClose - tr.ep) * tr.q)}</div></div></div>`;
-    }).join('') : `<p class="empty">No open positions – everything is in cash.</p>`) + `</div>`;
+    }).join('') : `<p class="empty">${(() => { const b = Object.entries(st.tickers).filter(([, t]) => t.live.pending === 'BUY'); if (b.length) return `Nothing yet – buying ${b.map(([x]) => sym(x)).join(', ')} ${esc(fillWhen())}.`; const B = E.brainParams(st); return E.isPaused(st) ? 'Nothing held – trading is paused (tap Resume).' : B.beat ? 'Nothing held yet – Beat the Nifty buys every stock at the next open after an update.' : 'No open positions – no strategy has a buy signal right now.'; })()}</p>`) + `</div>`;
     h += `<div class="card"><div class="lbl">Your stocks · ${st.cfg.tickers.length}</div>` + Object.entries(T).slice(0, 6).map(([s, t]) => {
       const sp = t.spark.c, ch = sp.length > 1 ? (sp[sp.length - 1] / sp[sp.length - 2] - 1) * 100 : 0;
       const o = t.pred && t.pred.outlook;

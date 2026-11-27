@@ -567,6 +567,7 @@
         // quick mode: any quick strategy that has been making money on this stock may trigger an entry
         const qfire = B.quick && T.quickSet && T.quickSet.length ? T.quickSet.find((k) => tg[k] === 1) : null;
         // idle money: with no trusted strategy, either sit in cash or ride the stock while it AND the Nifty are in uptrends
+        if (B.beat && T.active) T.active = null; // Beat the Nifty: old strategies stop deciding at once, not at their next review
         const idleOn = !B.quick && !T.active && (B.idle === 'trend' ? !feat.market_down && tg.trend_hold === 1
           : B.idle === 'core' ? !(feat.market_down && feat.below_200) : B.idle === 'market' ? !feat.market_down
           : B.idle === 'crash' ? !(T.crashOff = feat.market_gap < -B.crashGap ? true : feat.market_gap > 0 ? false : !!T.crashOff) : false);
@@ -618,6 +619,12 @@
   }
 
   function run(st, data, nifty, nowMs) {
+    // a brand-new account: the latest completed session (e.g. yesterday's close) is paper day 1, so its first orders
+    // are placed at that close and fill at the next open – instead of waiting for today's close to exist first
+    if (!st.training && st.lastDate === null && !st.equity.length && nifty && nifty.bars.d.length) {
+      const lastD = nifty.bars.d[nifty.bars.d.length - 1];
+      if (lastD < st.paperStart && lastD > st.warmStart) st.paperStart = lastD;
+    }
     const ctx = begin(st, data, nifty, nowMs);
     stepDays(ctx, Infinity);
     return finish(ctx);
