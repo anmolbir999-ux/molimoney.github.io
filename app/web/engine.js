@@ -1060,6 +1060,39 @@
       v += R.pos[s].q * px; }
     return v;
   }
+  /** Carry out the pending plan at prices given by px(sym) (the day's open, or a live price). */
+  function rotExecute(R, data, d, px, note = '') {
+    const plan = R.pending; if (!plan) return 0; R.pending = null;
+    let val = R.cash; for (const s in R.pos) { const p = px(s); val += R.pos[s].q * (p != null ? p : rotPrep(data, s).b.c[rotPrep(data, s).b.c.length - 1]); }
+    const want = {}, n0 = R.trades.length;
+    for (const s in plan.w) { const p = px(s); if (p) want[s] = Math.floor((val * plan.w[s] * 0.995) / p); }
+    const sl = (s) => { const P = rotPrep(data, s), j = P.b.d.length - 1; const tv = P.tv[P.idx[d] !== undefined ? P.idx[d] : j] || 0; return tv >= 5e9 ? 0.05 : tv >= 1e9 ? 0.1 : tv >= 2e8 ? 0.2 : 0.4; };
+    for (const s of Object.keys(R.pos)) { const p = px(s); if (p == null) continue;
+      const tq = want[s] || 0, cur = R.pos[s].q;
+      // tax-aware: don't sell a winner that turns long-term within 45 days if it is still ranked well
+      if (tq < cur && R.cfg.taxAware && plan.near && plan.near[s] && plan.ex > 0) continue;
+      if (tq === 0) rotSell(R, s, cur, p, d, (plan.why[s] || 'dropped out') + note, sl(s));
+      else if (cur - tq > cur * 0.2) rotSell(R, s, cur - tq, p, d, 'rebalance' + note, sl(s)); }
+    for (const s in want) { const p = px(s), cur = R.pos[s] ? R.pos[s].q : 0, tq = want[s];
+      if (tq > cur && (cur === 0 || tq - cur > cur * 0.2)) rotBuy(R, s, tq - cur, p, d, (cur ? 'rebalance' : 'joined the top ' + R.cfg.topN) + note, sl(s)); }
+    return R.trades.length - n0;
+  }
+  /**
+   * Live fill during market hours: queued orders of the paper account and the momentum account are filled now at the
+   * live price (plus slippage and costs) instead of waiting for the next open. `live` = { 'TCS.NS': price, ... }.
+   */
+  function fillNow(st, live, today, rot, rotData) {
+    const done = [];
+    for (const [sym, T] of Object.entries(st.tickers)) {
+      const t = T.live, p = live[sym]; if (!p || !t.pending) continue;
+      if (t.pending === 'BUY' && t.qty === 0) { tBuy(t, today, p); if (t.qty > 0) { t.trades[t.trades.length - 1].live = 1; done.push({ sym, side: 'BUY', q: t.qty, p: t.trades[t.trades.length - 1].ep }); } }
+      else if (t.pending === 'SELL' && t.qty > 0) { const q = t.qty, cl = tSell(t, today, p, t.pReason || 'signal'); if (cl) { cl.live = 1; done.push({ sym, side: 'SELL', q, p: cl.xp }); } }
+      t.pending = ''; t.pReason = '';
+    }
+    let rn = 0;
+    if (rot && rot.pending && rotData) rn = rotExecute(rot, rotData, today, (s) => live[s] || null, ' (live price)');
+    return { done, rot: rn };
+  }
   /**
    * Advance a rotation account through every trading day after R.lastDate up to `upto`.
    * Signals at a close, trades at the next open. Works incrementally (live) or in one go (backtest).
@@ -1082,19 +1115,7 @@
       // dividends to holders on the ex-date
       for (const s in R.pos) { const dv = data[s] && data[s].divs && data[s].divs[d]; if (dv) { R.cash += R.pos[s].q * dv; R.divs += R.pos[s].q * dv; } }
       // execute yesterday's plan at today's open
-      if (R.pending) {
-        const plan = R.pending; R.pending = null;
-        const val = rotValue(R, data, d), want = {};
-        for (const s in plan.w) { const P = rotPrep(data, s), i = P.idx[d]; if (i !== undefined) want[s] = Math.floor((val * plan.w[s] * 0.995) / P.b.o[i]); }
-        for (const s of Object.keys(R.pos)) { const P = rotPrep(data, s), i = P.idx[d]; if (i === undefined) continue;
-          const tq = want[s] || 0, cur = R.pos[s].q;
-          // tax-aware: don't sell a winner that turns long-term within 45 days if it is still ranked well
-          if (tq < cur && R.cfg.taxAware && plan.near && plan.near[s] && plan.ex > 0) continue;
-          if (tq === 0) rotSell(R, s, cur, P.b.o[i], d, plan.why[s] || 'dropped out', rotSlip(R, data, s, d));
-          else if (cur - tq > cur * 0.2) rotSell(R, s, cur - tq, P.b.o[i], d, 'rebalance', rotSlip(R, data, s, d)); }
-        for (const s in want) { const P = rotPrep(data, s), i = P.idx[d], cur = R.pos[s] ? R.pos[s].q : 0, tq = want[s];
-          if (tq > cur && (cur === 0 || tq - cur > cur * 0.2)) rotBuy(R, s, tq - cur, P.b.o[i], d, cur ? 'rebalance' : 'joined the top ' + R.cfg.topN, rotSlip(R, data, s, d)); }
-      }
+      if (R.pending) rotExecute(R, data, d, (s) => { const P = rotPrep(data, s), i = P.idx[d]; return i === undefined ? null : P.b.o[i]; });
       const n = nl(d), gap = n && n.s200 ? n.c / n.s200 - 1 : 0, gapPct = gap * 100;
       // decide at the close: monthly rebalance, or immediately when the market's exposure level changes
       const mo = d.slice(0, 7), C = R.cfg;
@@ -1447,7 +1468,7 @@
   const api = { cost, sma, ema, rsi, macd, atr, STRATEGIES, FEATURES, parseYahoo, prepare, newState, run,
     diagnose, stats, equity, blocked, sharpe, newTrader, onBar, niftyLookup, resolve, REVIEW_EVERY,
     BRAIN_DEFAULTS, brainParams, SPACE, describeParams, neighbours, makeOptimizer, makeEvolver, randomParams, evaluate, periodStats, applyParams, paramKey, normParams,
-    predict, SIGNALS, signalMatrix, NIFTY50, ROT_UNIVERSE, ROT_DEFAULTS, monteCarlo, taxRates, inNifty50, NIFTY50_HIST_END, newRot, rotRun, rotRank, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
+    predict, SIGNALS, signalMatrix, fillNow, NIFTY50, ROT_UNIVERSE, ROT_DEFAULTS, monteCarlo, taxRates, inNifty50, NIFTY50_HIST_END, newRot, rotRun, rotRank, trendForecast, trendStates, trendCalls, scoreCalls, predictAt, closesAfter, barsUpTo, _tf: { tfFeatures: (...a) => tfFeatures(...a), logitFit: (...a) => logitFit(...a) },
     migrate, pauseOn, isPaused, setPause, addTicker, removeTicker, QUICK, NORMAL, QUICK_PRESET, NORMAL_PRESET, BEAT_PRESET, allowedStrategies,
     begin, stepDays, skipTo, daysLeft, finish, newTraining, lessonsBefore, mistakesBefore, mergeMistakes, memBlock, teach, previewTeach, readBrain, importBrain, previewImport,
     adjustCapital, netCapital, cashTotal };

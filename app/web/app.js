@@ -175,6 +175,37 @@
     }
   }
   let rotLook = null;
+  // ---------------------------------------------------------------- live fills during market hours
+  const hasOrders = () => Object.values(st.tickers).some((t) => t.live.pending) || !!(st.rot && st.rot.pending && rotLook);
+  /** Latest traded price for each symbol (Yahoo, ~1 minute old), only if it is from today's session. */
+  async function livePrices(syms) {
+    const out = {}, today = todayIST();
+    for (let i = 0; i < syms.length; i++) {
+      if (cancel) throw new Error('stopped');
+      progress(i, syms.length, `Live price: ${sym(syms[i])}`);
+      try {
+        const j = JSON.parse(await httpGet(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(syms[i])}?range=1d&interval=5m`)), m = j.chart.result[0].meta;
+        const t = m.regularMarketTime, p = m.regularMarketPrice;
+        if (p > 0 && t && new Date((t + 19800) * 1000).toISOString().slice(0, 10) === today) out[syms[i]] = p;
+      } catch (e) { /* skip */ }
+    }
+    return out;
+  }
+  async function fillLive() {
+    const R = st.rot, plan = R && R.pending && rotLook ? R.pending : null;
+    const syms = [...new Set([...Object.entries(st.tickers).filter(([, t]) => t.live.pending).map(([s]) => s), ...(plan ? [...Object.keys(plan.w), ...Object.keys(R.pos)] : [])])];
+    if (!syms.length) return;
+    const live = await livePrices(syms);
+    if (!Object.keys(live).length) throw new Error('no live quotes right now');
+    const r = E.fillNow(st, live, todayIST(), plan ? R : null, plan ? rotLook.data : null);
+    for (const [k, v] of Object.entries(live)) if (st.tickers[k]) st.tickers[k].lastClose = v; // show positions at the live price
+    const time = new Date(Date.now() + IST).toISOString().slice(11, 16);
+    const lines = r.done.map((x) => `- ${x.side === 'BUY' ? 'Bought' : 'Sold'} ${x.q} ${sym(x.sym)} at ${px(x.p)}`);
+    const rt = R ? R.trades.slice(-r.rot) : [];
+    if (lines.length || r.rot) say(`**Filled at live prices (${time} IST):**${lines.length ? `\n\nPaper account:\n${lines.join('\n')}` : ''}${r.rot ? `\n\nMomentum account:\n${rt.map((t) => `- ${t.side === 'BUY' ? 'Bought' : 'Sold'} ${t.q} ${sym(t.sym)} at ${px(t.p)}`).join('\n')}` : ''}\n\nLive prices are about a minute old; slippage and costs are added like any other fill.`, 'pnl');
+    const missed = syms.filter((x) => !live[x]); if (missed.length) toast(`No live price for ${missed.map(sym).join(', ')} – those fill at the next open`);
+    store.save(st);
+  }
   // ---------------------------------------------------------------- benchmarks: an index fund (and a momentum ETF)
   // NIFTYBEES = the Nifty with dividends, minus a tiny fee; MOMENTUM = a Nifty 200 Momentum 30 ETF (from Aug 2022).
   // The whole series is replaced at each update (adjusted closes get rebased at every dividend).
@@ -309,7 +340,7 @@
       const e = st.rotSim.equity, rr = (e[e.length - 1][1] / e[0][1] - 1) * 100, nr = (e[e.length - 1][2] / e[0][2] - 1) * 100;
       h += `<div class="card"><div class="lbl">Practice before it started · ${fdate(st.rotSim.start)} – ${fdate(st.rotSim.end)}</div>${vsNifty(e, {}, null, 'Momentum (practice)')}<p class="m" style="margin:6px 0 0"><b class="${cls(rr)}">${pct(rr)}</b> vs Nifty ${pct(nr)} after costs and ${inr(st.rotSim.tax)} tax.</p></div>`;
     }
-    { const al = rebalanceAlert(); if (al) h += `<div class="card" style="border-color:var(--clay)"><div class="lbl">Orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p><p class="m" style="margin:4px 0 0">To copy it with real money you'd place these orders yourself on your broker – Moli never trades real money.</p></div>`; }
+    { const al = rebalanceAlert(); if (al) h += `<div class="card" style="border-color:var(--clay)"><div class="lbl">Orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p><p class="m" style="margin:4px 0 0">To copy it with real money you'd place these orders yourself on your broker – Moli never trades real money.</p>${market().open ? '<div class="actions"><button class="btn sm" data-act="fillnow">Trade now at live prices</button></div>' : ''}</div>`; }
     if (R.equity.length > 1) { const sc = scoreRows('rot', R.equity, R.equity[0][0]); h += `<div class="card"><div class="lbl">Live scorecard</div><div class="row"><div><b>Momentum account</b></div><div class="r"><b class="${cls(sc.ret)}">${pct(sc.ret)}</b></div></div><div class="row"><div><b>Index fund, same period</b></div><div class="r"><b class="${cls(sc.idx)}">${sc.idx == null ? '–' : pct(sc.idx)}</b></div></div>${sc.mix != null ? `<div class="row"><div><b>50% index + 50% momentum ETF</b></div><div class="r"><b class="${cls(sc.mix)}">${pct(sc.mix)}</b></div></div>` : ''}<p class="sub" style="margin-top:6px">${esc(scoreVerdict(sc))}</p></div>`; }
     h += `<div class="sec">What 5 years could look like</div>` + mcCard();
     const pos = Object.entries(R.pos), last = R.equity.length ? R.equity[R.equity.length - 1][0] : null, val = rotVal();
@@ -367,6 +398,7 @@
       if (st.rotOn !== false && nifty) { try { await updateRot(data, nifty); } catch (e) { if (e.message === 'stopped') throw e; run.msg = 'Momentum account: ' + e.message; } }
       try { await updateBench(); } catch (e) { if (e.message === 'stopped') throw e; }
       try { logPredictions(); } catch (e) { /* tracking is best-effort */ }
+      if (market().open && hasOrders()) { try { await fillLive(); } catch (e) { if (e.message === 'stopped') throw e; say(`I couldn't get live prices (${e.message}) – the orders will fill at the next open instead.`); } }
       const brief = briefing(res, before);
       if (brief) say(brief, res.days > 300 ? 'sim' : res.days ? 'pnl' : null);
       Object.assign(run, { days: res.days, from: res.days ? (before || st.warmStart) : null, to: st.lastDate });
@@ -571,7 +603,7 @@
     if (gap > 20 && !mk.open) add({ kind: 'warn', title: 'Time to catch up', body: `Last update was ${updatedAgo()}. Update so I can trade the sessions I missed and learn from them.`, act: ['update', 'Update now'] });
     if (!B.beat) add({ kind: nRet != null && ret < nRet ? 'warn' : 'idea', title: nRet != null && ret < nRet ? `Behind the Nifty by ${(nRet - ret).toFixed(1)} pts – try Beat the Nifty` : 'Want to beat the Nifty?', body: `In tests my ${B.quick ? 'quick' : 'normal'} style lagged the Nifty – switching in and out of stocks costs too much in rising markets. Beat the Nifty simply stays invested; in the honest test holding all Nifty 50 stocks equally made +11.5%/yr vs +10.6% for the index (2010–2026).`, act: ['beat-on', 'Switch to Beat the Nifty'] });
     const pend = Object.entries(st.tickers).filter(([, t]) => t.live.pending);
-    if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + ` – ${fillWhen()}. Orders are placed at a day's close and fill at the next open, so a new account starts holding shares from the next trading day.`, pill: 'next open' });
+    if (pend.length) add({ kind: 'idea', title: `${pend.length} order${pend.length > 1 ? 's' : ''} at the next open`, body: pend.map(([s, t]) => `${t.live.pending === 'BUY' ? 'Buy' : 'Sell'} ${sym(s)}`).join(', ') + ` – ${fillWhen()}. Orders are placed at a day's close and fill at the next open${mk.open ? ' – or tap below to fill them now at live prices' : ''}.`, pill: 'next open', act: mk.open ? ['fillnow', 'Buy now at live price'] : null });
     if (nRet != null && days >= 15 && ret < nRet - 3) add({ kind: 'warn', title: `The Nifty is ahead of me by ${(nRet - ret).toFixed(1)} pts`, body: `Since ${fdate(st.paperStart)} I made ${pct(ret)} while a Nifty index fund made ${pct(nRet)}. Most active strategies trail the index over time. Holding part of the money in NIFTYBEES (a Nifty ETF) keeps you close to the market.`, pill: `−${(nRet - ret).toFixed(1)} pts`, neg: true, act: st.cfg.tickers.includes('NIFTYBEES.NS') ? null : ['add:NIFTYBEES.NS', 'Add NIFTYBEES'] });
     if (nRet != null && days >= 15 && ret > nRet + 2) add({ kind: 'good', title: `Ahead of the Nifty by ${(ret - nRet).toFixed(1)} pts`, body: `I made ${pct(ret)} vs the Nifty's ${pct(nRet)} since ${fdate(st.paperStart)}. A short streak can be luck – keep watching it over months.`, pill: `+${(ret - nRet).toFixed(1)} pts` });
     const dd = maxDD(idx);
@@ -618,6 +650,7 @@
     if (a === 'settings') { tab = 'settings'; render(); return window.scrollTo(0, 0); }
     if (a === 'wrapped') return openWrapped();
     if (a === 'import') return startImport();
+    if (a === 'fillnow') { if (!market().open) { toast('The market is closed – orders fill at the next open'); return; } return update(); }
     if (a === 'beat-on') { setStyle('beat'); toast('Beat the Nifty on'); say(`Switched. ${styleText()}`); return render(); }
     if (a === 'quick-on' || a === 'quick-off') { setStyle(a === 'quick-on'); toast(a === 'quick-on' ? 'Quick trading on' : 'Normal trading on'); return render(); }
     if (a === 'train' || a === 'train-walk') { if (a === 'train-walk') Object.assign(train, { phase: 'setup', mode: 'repeat', route: 'walk', preset: '5y' }); tab = 'train'; render(); return window.scrollTo(0, 0); }
@@ -651,7 +684,7 @@
       <h3>${esc(a.title)}</h3><p>${esc(a.body)}</p>
       <div class="actions" style="margin-top:10px">${a.act ? `<button class="btn sm" data-act="${esc(a.act[0])}">${esc(a.act[1])}</button>` : ''}${adv.length > 1 ? `<a class="more" data-act="nexttip">Next tip (${(tipIdx % adv.length) + 1}/${adv.length}) ›</a>` : ''}</div></div></div>`;
     h += rotHomeCard();
-    { const al = rebalanceAlert(); if (al) h += `<a class="card" data-go="rot" style="display:block;cursor:pointer;border-color:var(--clay)"><div class="lbl">Momentum · orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p></a>`; }
+    { const al = rebalanceAlert(); if (al) h += `<a class="card" data-go="rot" style="display:block;cursor:pointer;border-color:var(--clay)"><div class="lbl">Momentum · orders</div><p class="sub" style="margin-top:4px">${esc(al.text.charAt(0).toUpperCase() + al.text.slice(1))} ${esc(fillWhen())}.</p></a>${market().open ? '<div class="actions" style="margin:-4px 0 12px"><button class="btn sm" data-act="fillnow">Trade now at live prices</button></div>' : ''}`; }
     h += scoreCard();
     const paused = E.isPaused(st), mk = market();
     h += `<div class="card"><div class="chips" style="margin:0">${marketChip()}${paused ? `<span class="chip paused">${paused === 'stop' ? 'Stopped' : 'Paused'}</span>` : ''}</div>
@@ -666,7 +699,7 @@
     h += `<div class="card"><div class="lbl">Positions</div>` + (pos.length ? pos.map(([s, t]) => {
       const tr = t.live.trades[t.live.trades.length - 1], r = (t.lastClose / tr.ep - 1) * 100;
       return `<div class="row"><div><b>${sym(s)}</b><div class="m">${tr.q} @ ${px(tr.ep)} · ${esc(E.STRATEGIES[tr.s]?.label || '')}${tr.stop ? ` · stop ${px(tr.stop)}` : ''}${tr.tp ? ` · target ${px(tr.tp)}` : ''}</div></div><div class="r"><b class="${cls(r)}">${pct(r)}</b><div class="m">${inr((t.lastClose - tr.ep) * tr.q)}</div></div></div>`;
-    }).join('') : `<p class="empty">${(() => { const b = Object.entries(st.tickers).filter(([, t]) => t.live.pending === 'BUY'); if (b.length) return `Nothing yet – buying ${b.map(([x]) => sym(x)).join(', ')} ${esc(fillWhen())}.`; const B = E.brainParams(st); return E.isPaused(st) ? 'Nothing held – trading is paused (tap Resume).' : B.beat ? 'Nothing held yet – Beat the Nifty buys every stock at the next open after an update.' : 'No open positions – no strategy has a buy signal right now.'; })()}</p>`) + `</div>`;
+    }).join('') : `<p class="empty">${(() => { const b = Object.entries(st.tickers).filter(([, t]) => t.live.pending === 'BUY'); if (b.length) return `Nothing yet – buying ${b.map(([x]) => sym(x)).join(', ')} ${esc(fillWhen())}.${market().open ? '</p><div class="actions"><button class="btn sm" data-act="fillnow">Buy now at live price</button></div><p class="m">' : ''}`; const B = E.brainParams(st); return E.isPaused(st) ? 'Nothing held – trading is paused (tap Resume).' : B.beat ? 'Nothing held yet – Beat the Nifty buys every stock at the next open after an update.' : 'No open positions – no strategy has a buy signal right now.'; })()}</p>`) + `</div>`;
     h += `<div class="card"><div class="lbl">Your stocks · ${st.cfg.tickers.length}</div>` + Object.entries(T).slice(0, 6).map(([s, t]) => {
       const sp = t.spark.c, ch = sp.length > 1 ? (sp[sp.length - 1] / sp[sp.length - 2] - 1) * 100 : 0;
       const o = t.pred && t.pred.outlook;
@@ -1880,6 +1913,11 @@
       E.setPause(st, 'stop', todayIST(), nowIso()); store.save(st);
       const n = Object.values(st.tickers).filter((t) => t.live.qty).length;
       return say(`Stopped. ${n ? `I'll sell all ${n} position${n > 1 ? 's' : ''} at the next open` : 'I hold nothing'} and won't buy until you say **resume**.`);
+    }
+    if (/\b(buy|trade|fill)\b.*\b(now|live)\b|\blive price/.test(l)) {
+      if (!market().open) return say(`The market is closed, so there's no live price – orders fill ${fillWhen()}.`);
+      if (!hasOrders()) return say('There are no queued orders to fill right now. Orders are created at a day\'s close (after an update), then I can fill them at live prices during market hours.');
+      return update();
     }
     if (/\b(momentum|rotation|rotate)\b/.test(l) && !/\btrain\b/.test(l)) {
       if (!st.rot) return say('The Momentum rotation account starts at your next update – say **update**.');
